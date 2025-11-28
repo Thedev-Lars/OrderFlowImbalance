@@ -1107,7 +1107,7 @@ var table tbl_flow = table.new(position=position.top_right, columns=12, rows=22,
 // Unified trades table holding possible, open, and closed trades in stacked sections.
 // Uses seven columns to accommodate the closed-trade tick/result data while keeping
 // consistent formatting for possible and open trades.
-var table tbl_trades = table.new(position=position.bottom_center, columns=7, rows=28, bgcolor=color.new(color.black, 85), border_width=1)
+var table tbl_trades = table.new(position=position.bottom_left, columns=7, rows=28, bgcolor=color.new(color.black, 85), border_width=1)
 
 if barstate.islast
     table.cell(tbl_flow, 0, 0, "ORDER FLOW HISTORY", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
@@ -1166,10 +1166,12 @@ if barstate.islast
     // Unified trades table showing possible (ENTRY), open (TESTING) and closed trades.
     int total_levels = array.size(kl_state)
     float closed_tick_sum = 0.0
-    for i_close = 0 to array.size(closed_ticks) - 1
-        float tick_val = array.get(closed_ticks, i_close)
-        if not na(tick_val)
-            closed_tick_sum += tick_val
+    int closed_tick_count = array.size(closed_ticks)
+    if closed_tick_count > 0
+        for i_close = 0 to closed_tick_count - 1
+            float tick_val = array.get(closed_ticks, i_close)
+            if not na(tick_val)
+                closed_tick_sum += tick_val
 
     // Table title
     table.cell(tbl_trades, 0, 0, "TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
@@ -1291,28 +1293,30 @@ if barstate.islast
     t_row += 1
 
     int max_c = 8
-    for idx = 0 to array.size(closed_side) - 1
-        if t_row < 28
-            string s_side3 = array.get(closed_side, idx)
-            float e_entry3 = array.get(closed_entry, idx)
-            float e_stop3 = array.get(closed_stop, idx)
-            float e_target3 = array.get(closed_target, idx)
-            float e_rr3 = array.get(closed_rr, idx)
-            float ticks_val = array.get(closed_ticks, idx)
-            string result_str = array.get(closed_result, idx)
-            string side_str3 = s_side3 == "buy" ? "Buy" : "Sell"
-            string ticks_str = na(ticks_val) ? "-" : str.tostring(math.round(ticks_val), "+#;-#")
-            string rr_str3 = na(e_rr3) ? "-" : str.tostring(e_rr3, "#.#")
-            color row_bg4 = s_side3 == "buy" ? color.new(col_buy, 90) : color.new(col_sell, 90)
-            color side_color4 = s_side3 == "buy" ? col_buy : col_sell
-            table.cell(tbl_trades, 0, t_row, side_str3, text_color=side_color4, text_size=size.small, bgcolor=row_bg4)
-            table.cell(tbl_trades, 1, t_row, str.tostring(e_entry3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-            table.cell(tbl_trades, 2, t_row, str.tostring(e_stop3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-            table.cell(tbl_trades, 3, t_row, str.tostring(e_target3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-            table.cell(tbl_trades, 4, t_row, rr_str3, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-            table.cell(tbl_trades, 5, t_row, ticks_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-            table.cell(tbl_trades, 6, t_row, result_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-            t_row += 1
+    int closed_count = array.size(closed_side)
+    if closed_count > 0
+        for idx = 0 to closed_count - 1
+            if t_row < 28
+                string s_side3 = array.get(closed_side, idx)
+                float e_entry3 = array.get(closed_entry, idx)
+                float e_stop3 = array.get(closed_stop, idx)
+                float e_target3 = array.get(closed_target, idx)
+                float e_rr3 = array.get(closed_rr, idx)
+                float ticks_val = array.get(closed_ticks, idx)
+                string result_str = array.get(closed_result, idx)
+                string side_str3 = s_side3 == "buy" ? "Buy" : "Sell"
+                string ticks_str = na(ticks_val) ? "-" : str.tostring(math.round(ticks_val), "+#;-#")
+                string rr_str3 = na(e_rr3) ? "-" : str.tostring(e_rr3, "#.#")
+                color row_bg4 = s_side3 == "buy" ? color.new(col_buy, 90) : color.new(col_sell, 90)
+                color side_color4 = s_side3 == "buy" ? col_buy : col_sell
+                table.cell(tbl_trades, 0, t_row, side_str3, text_color=side_color4, text_size=size.small, bgcolor=row_bg4)
+                table.cell(tbl_trades, 1, t_row, str.tostring(e_entry3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+                table.cell(tbl_trades, 2, t_row, str.tostring(e_stop3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+                table.cell(tbl_trades, 3, t_row, str.tostring(e_target3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+                table.cell(tbl_trades, 4, t_row, rr_str3, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+                table.cell(tbl_trades, 5, t_row, ticks_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+                table.cell(tbl_trades, 6, t_row, result_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+                t_row += 1
     for r = t_row to math.min(27, t_row + max_c)
         for col = 0 to 6
             table.cell(tbl_trades, col, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
