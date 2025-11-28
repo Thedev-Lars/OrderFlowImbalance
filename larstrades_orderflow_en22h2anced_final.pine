@@ -171,6 +171,20 @@ var array<int> kl_reject_count = array.new<int>()
 var array<string> kl_outcome = array.new<string>()
 var array<float> kl_realized_ticks = array.new<float>()
 
+// Trade Engine v2 scaffolding
+var int TE_STATE_ACTIVE = 0
+var int TE_STATE_POSSIBLE = 1
+var int TE_STATE_OPEN = 2
+var int TE_STATE_CLOSED_WIN = 3
+var int TE_STATE_CLOSED_LOSS = 4
+var int TE_STATE_REJECTED = 5
+
+var array<int> trade_state = array.new<int>()
+var array<float> trade_entry = array.new<float>()
+var array<float> trade_stop = array.new<float>()
+var array<float> trade_target = array.new<float>()
+var array<float> trade_ticks = array.new<float>()
+
 // Session management
 var int last_session_day = 0
 int current_day = dayofmonth(time)
@@ -211,6 +225,11 @@ if current_day != last_session_day
     array.clear(kl_reject_count)
     array.clear(kl_outcome)
     array.clear(kl_realized_ticks)
+    array.clear(trade_state)
+    array.clear(trade_entry)
+    array.clear(trade_stop)
+    array.clear(trade_target)
+    array.clear(trade_ticks)
     last_session_day := current_day
 
 get_tier(float peak_ratio) =>
