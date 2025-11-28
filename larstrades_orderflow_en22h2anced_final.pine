@@ -658,15 +658,14 @@ if array.size(kl_state) > 0
                     // Estimate opposing volume: for buy levels ratio = buy/sell, so sellVol ≈ totalVol/(1+ratio).
                     // For sell levels ratio = sell/buy, so buyVol ≈ totalVol/(1+ratio).
                     float opposingVol = totalVol / (1 + ratio_i)
-                    bool noOpposition = opposingVol <= totalVol * maxOpposingPct
+                    float opposingPct = totalVol > 0 ? opposingVol / totalVol : 1.0
+                    bool opposition_ok = opposingPct <= maxOpposingPct or ratio_i >= imbalanceRatio
                     bool trendAlign = not trendFilterEnabled or ((side == "buy" and trendDir == "up") or (side == "sell" and trendDir == "down"))
                     bool extremeLevel = ratio_i >= extremeRatio
                     // A level passes the filter if it aligns with the prevailing trend
-                    // *and* has limited opposing volume, or if it is classified as
-                    // extreme (which overrides both filters).  This keeps the opposing
-                    // volume input meaningful while still allowing standout levels
-                    // through.
-                    bool passFilter = not trendFilterEnabled or (trendAlign and noOpposition) or extremeLevel
+                    // and either meets the opposing-volume threshold or already clears
+                    // the baseline imbalance ratio. Extreme tiers still override both.
+                    bool passFilter = not trendFilterEnabled or (trendAlign and (opposition_ok or extremeLevel)) or extremeLevel
 
                     // Find target and validate risk:reward.  Take profits are always based on
                     // prior opposing key imbalance levels.  Trades are only considered
@@ -1001,7 +1000,7 @@ if array.size(kl_box) > 0
 // TABLES (UNCHANGED)
 // ============================================================================
 
-var table tbl_key = table.new(position=position.middle_left, columns=9, rows=12, bgcolor=color.new(color.black, 85), border_width=1)
+var table tbl_key = table.new(position=position.bottom_right, columns=9, rows=12, bgcolor=color.new(color.black, 85), border_width=1)
 
 if barstate.islast
     table.cell(tbl_key, 0, 0, "KEY IMBALANCE LEVELS", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
