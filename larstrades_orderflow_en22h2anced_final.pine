@@ -765,40 +765,40 @@ if array.size(kl_state) > 0
                 float stop = array.get(kl_stop_price, i)
                 float target = array.get(kl_target_price, i)
                 float entry_price = array.get(kl_entry_price, i)
-                
-                    if side == "buy"
-                        // Check for profit (target hit)
-                        if not na(target) and high >= target
-                            float ticks_val = (target - entry_price) / syminfo.mintick
-                            array.set(kl_test_count, i, test_count + 1)
-                            array.set(kl_reject_count, i, 0)
-                            finalize_close(i, "Profit", ticks_val)
-                        // Check for stop (with confirmation)
-                        else if not na(stop) and close < stop
-                            reject_count := reject_count + 1
-                            array.set(kl_reject_count, i, reject_count)
-                            if reject_count >= profitConfirmBars
-                                float ticks_val = (stop - entry_price) / syminfo.mintick
-                                finalize_close(i, "Loss", ticks_val)
-                        else
-                            array.set(kl_reject_count, i, 0)
-                    
-                    else  // sell
-                        // Check for profit (target hit)
-                        if not na(target) and low <= target
-                            float ticks_val = (entry_price - target) / syminfo.mintick
-                            array.set(kl_test_count, i, test_count + 1)
-                            array.set(kl_reject_count, i, 0)
-                            finalize_close(i, "Profit", ticks_val)
-                        // Check for stop (with confirmation)
-                        else if not na(stop) and close > stop
-                            reject_count := reject_count + 1
-                            array.set(kl_reject_count, i, reject_count)
-                            if reject_count >= profitConfirmBars
-                                float ticks_val = (entry_price - stop) / syminfo.mintick
-                                finalize_close(i, "Loss", ticks_val)
-                        else
-                            array.set(kl_reject_count, i, 0)
+
+                if side == "buy"
+                    // Check for profit (target hit)
+                    if not na(target) and high >= target
+                        float ticks_val = (target - entry_price) / syminfo.mintick
+                        array.set(kl_test_count, i, test_count + 1)
+                        array.set(kl_reject_count, i, 0)
+                        finalize_close(i, "Profit", ticks_val)
+                    // Check for stop (with confirmation)
+                    else if not na(stop) and close < stop
+                        reject_count := reject_count + 1
+                        array.set(kl_reject_count, i, reject_count)
+                        if reject_count >= profitConfirmBars
+                            float ticks_val = (stop - entry_price) / syminfo.mintick
+                            finalize_close(i, "Loss", ticks_val)
+                    else
+                        array.set(kl_reject_count, i, 0)
+
+                else  // sell
+                    // Check for profit (target hit)
+                    if not na(target) and low <= target
+                        float ticks_val = (entry_price - target) / syminfo.mintick
+                        array.set(kl_test_count, i, test_count + 1)
+                        array.set(kl_reject_count, i, 0)
+                        finalize_close(i, "Profit", ticks_val)
+                    // Check for stop (with confirmation)
+                    else if not na(stop) and close > stop
+                        reject_count := reject_count + 1
+                        array.set(kl_reject_count, i, reject_count)
+                        if reject_count >= profitConfirmBars
+                            float ticks_val = (entry_price - stop) / syminfo.mintick
+                            finalize_close(i, "Loss", ticks_val)
+                    else
+                        array.set(kl_reject_count, i, 0)
             
             // PROFIT → HELD
             else if current_state == STATE_PROFIT
