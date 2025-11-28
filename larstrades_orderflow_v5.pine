@@ -32,6 +32,7 @@ alert_retest_blocks = input.bool(true, "Alert on Retest", group=grp4)
 
 // ==================== CALCULATIONS ====================
 avg_vol = ta.sma(volume, 20)
+atr14 = ta.atr(14)
 
 // ==================== ALERT STATE ====================
 new_block_trigger = false
@@ -155,6 +156,32 @@ if barstate.isconfirmed and volume > 0 and (high - low) > 0
             best_lvl_top := lvl_top
             best_lvl_bot := lvl_bot
             best_lvl_mid := lvl_mid
+
+    // Log standout level into persistent history (keeps session memory alive)
+    if best_ratio >= 2.0
+        vol_at_lvl = volume / levels
+        bv = vol_at_lvl * best_buy_pct
+        sv = vol_at_lvl * (1 - best_buy_pct)
+        vol_factor = avg_vol > 0 ? vol_at_lvl / avg_vol : 1
+        strength = best_ratio * vol_factor
+
+        array.push(hist_prices, best_lvl_mid)
+        array.push(hist_buys, bv)
+        array.push(hist_sells, sv)
+        array.push(hist_ratios, best_ratio)
+        array.push(hist_is_buy, best_is_buy)
+        array.push(hist_scores, strength)
+        array.push(hist_bars, bar_index)
+
+        // Trim oldest records to avoid bloat
+        if array.size(hist_prices) > hist_max
+            array.shift(hist_prices)
+            array.shift(hist_buys)
+            array.shift(hist_sells)
+            array.shift(hist_ratios)
+            array.shift(hist_is_buy)
+            array.shift(hist_scores)
+            array.shift(hist_bars)
 
     // Only create ONE block per candle, and only if it qualifies
     vol_qualified = volume >= (avg_vol * ob_vol_mult) or best_ratio >= ob_ratio + 1.0
@@ -412,192 +439,247 @@ if barstate.isconfirmed
         alert(filled_block_message, alert.freq_once_per_bar_close)
 
 // ==================== TABLES ====================
-var table main_tbl = table.new(position.middle_right, 7, 18, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
+var table main_tbl = table.new(position.middle_right, 8, 26, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
 
-var lvl_prices = array.new_float()
-var lvl_buys = array.new_float()
-var lvl_sells = array.new_float()
-var lvl_ratios = array.new_float()
-var lvl_is_buy = array.new_bool()
-var lvl_scores = array.new_float()
-var lvl_bars = array.new_int()
+// Scratch arrays for clustered order flow (per bar)
+var float[] cluster_low = array.new_float()
+var float[] cluster_high = array.new_float()
+var float[] cluster_buy = array.new_float()
+var float[] cluster_sell = array.new_float()
+var float[] cluster_ratio = array.new_float()
+var float[] cluster_score = array.new_float()
+var bool[] cluster_is_buy = array.new_bool()
+var int[] cluster_bar = array.new_int()
+
+// Scratch arrays for top-tick panel (rolling ranks)
+var float[] tick_prices = array.new_float()
+var float[] tick_vols = array.new_float()
+var string[] tick_sides = array.new_string()
 
 if barstate.islast and show_table
-    // ========== COLLECT ORDER FLOW LEVELS ==========
-    array.clear(lvl_prices)
-    array.clear(lvl_buys)
-    array.clear(lvl_sells)
-    array.clear(lvl_ratios)
-    array.clear(lvl_is_buy)
-    array.clear(lvl_scores)
-    array.clear(lvl_bars)
+    // Clear cluster scratch arrays
+    array.clear(cluster_low)
+    array.clear(cluster_high)
+    array.clear(cluster_buy)
+    array.clear(cluster_sell)
+    array.clear(cluster_ratio)
+    array.clear(cluster_score)
+    array.clear(cluster_is_buy)
+    array.clear(cluster_bar)
 
-    for b = 0 to lookback - 1
+    // Build clusters for the last six bars using ATR-sized buckets
+    cluster_bars = math.min(6, bar_index + 1)
+    for b = 0 to cluster_bars - 1
         if volume[b] > 0 and (high[b] - low[b]) > 0
             rng = high[b] - low[b]
-            step = rng / levels
+            bucket = math.max(atr14[b] / levels, syminfo.mintick)
+            bucket_count = math.max(1, math.ceil(rng / bucket))
 
-            for j = 0 to levels - 1
-                lvl_bot = low[b] + (j * step)
-                lvl_mid = lvl_bot + (step / 2)
+            // Collect buckets for this bar
+            var float[] tmp_low = array.new_float()
+            var float[] tmp_high = array.new_float()
+            var float[] tmp_buy = array.new_float()
+            var float[] tmp_sell = array.new_float()
+            var float[] tmp_ratio = array.new_float()
+            var float[] tmp_score = array.new_float()
+            var bool[] tmp_side = array.new_bool()
+
+            for j = 0 to bucket_count - 1
+                lvl_bot = low[b] + (j * bucket)
+                lvl_top = math.min(lvl_bot + bucket, high[b])
+                lvl_mid = (lvl_bot + lvl_top) / 2
 
                 [ratio, is_buy, buy_pct] = calc_level_ratio(lvl_mid, high[b], low[b], open[b], close[b], volume[b], rng)
-
-                vol_at_lvl = volume[b] / levels
-                bv = vol_at_lvl * buy_pct
-                sv = vol_at_lvl * (1 - buy_pct)
-                score = ratio * (avg_vol > 0 ? (vol_at_lvl / avg_vol) : 1)
+                bucket_vol = volume[b] / bucket_count
+                bv = bucket_vol * buy_pct
+                sv = bucket_vol * (1 - buy_pct)
+                score = ratio * (avg_vol > 0 ? bucket_vol / avg_vol : 1)
 
                 if ratio >= 2.0
-                    array.push(lvl_prices, lvl_mid)
-                    array.push(lvl_buys, bv)
-                    array.push(lvl_sells, sv)
-                    array.push(lvl_ratios, ratio)
-                    array.push(lvl_is_buy, is_buy)
-                    array.push(lvl_scores, score)
-                    array.push(lvl_bars, b)
+                    array.push(tmp_low, lvl_bot)
+                    array.push(tmp_high, lvl_top)
+                    array.push(tmp_buy, bv)
+                    array.push(tmp_sell, sv)
+                    array.push(tmp_ratio, ratio)
+                    array.push(tmp_score, score)
+                    array.push(tmp_side, is_buy)
 
-    // Sort by strength score
-    if array.size(lvl_scores) > 1
-        sort_size = array.size(lvl_scores)
-        for x = 0 to math.min(sort_size - 1, 50)
-            for y = 0 to sort_size - 2
-                if array.get(lvl_scores, y + 1) > array.get(lvl_scores, y)
-                    tmp_p = array.get(lvl_prices, y)
-                    tmp_b = array.get(lvl_buys, y)
-                    tmp_s = array.get(lvl_sells, y)
-                    tmp_r = array.get(lvl_ratios, y)
-                    tmp_i = array.get(lvl_is_buy, y)
-                    tmp_sc = array.get(lvl_scores, y)
-                    tmp_bar = array.get(lvl_bars, y)
+            // Take the top two buckets per bar by score
+            picks = math.min(2, array.size(tmp_score))
+            for pick = 0 to picks - 1
+                best_idx = -1
+                best_score = 0.0
+                for j = 0 to array.size(tmp_score) - 1
+                    sc = array.get(tmp_score, j)
+                    if sc > best_score
+                        best_score := sc
+                        best_idx := j
+                if best_idx >= 0
+                    array.push(cluster_low, array.get(tmp_low, best_idx))
+                    array.push(cluster_high, array.get(tmp_high, best_idx))
+                    array.push(cluster_buy, array.get(tmp_buy, best_idx))
+                    array.push(cluster_sell, array.get(tmp_sell, best_idx))
+                    array.push(cluster_ratio, array.get(tmp_ratio, best_idx))
+                    array.push(cluster_score, array.get(tmp_score, best_idx))
+                    array.push(cluster_is_buy, array.get(tmp_side, best_idx))
+                    array.push(cluster_bar, b)
 
-                    array.set(lvl_prices, y, array.get(lvl_prices, y + 1))
-                    array.set(lvl_buys, y, array.get(lvl_buys, y + 1))
-                    array.set(lvl_sells, y, array.get(lvl_sells, y + 1))
-                    array.set(lvl_ratios, y, array.get(lvl_ratios, y + 1))
-                    array.set(lvl_is_buy, y, array.get(lvl_is_buy, y + 1))
-                    array.set(lvl_scores, y, array.get(lvl_scores, y + 1))
-                    array.set(lvl_bars, y, array.get(lvl_bars, y + 1))
+                    array.set(tmp_score, best_idx, -1.0)
 
-                    array.set(lvl_prices, y + 1, tmp_p)
-                    array.set(lvl_buys, y + 1, tmp_b)
-                    array.set(lvl_sells, y + 1, tmp_s)
-                    array.set(lvl_ratios, y + 1, tmp_r)
-                    array.set(lvl_is_buy, y + 1, tmp_i)
-                    array.set(lvl_scores, y + 1, tmp_sc)
-                    array.set(lvl_bars, y + 1, tmp_bar)
+    // Re-rank clusters globally by bar recency then score
+    if array.size(cluster_score) > 1
+        sz = array.size(cluster_score)
+        for x = 0 to math.min(sz - 1, 50)
+            for y = 0 to sz - 2
+                newer = array.get(cluster_bar, y) < array.get(cluster_bar, y + 1)
+                same_bar = array.get(cluster_bar, y) == array.get(cluster_bar, y + 1)
+                stronger = array.get(cluster_score, y + 1) > array.get(cluster_score, y)
+                if newer or (same_bar and stronger)
+                    array.swap(cluster_low, y, y + 1)
+                    array.swap(cluster_high, y, y + 1)
+                    array.swap(cluster_buy, y, y + 1)
+                    array.swap(cluster_sell, y, y + 1)
+                    array.swap(cluster_ratio, y, y + 1)
+                    array.swap(cluster_score, y, y + 1)
+                    array.swap(cluster_is_buy, y, y + 1)
+                    array.swap(cluster_bar, y, y + 1)
 
-    lvl_used = array.new_bool()
-    if array.size(lvl_prices) > 0
-        for i = 0 to array.size(lvl_prices) - 1
-            array.push(lvl_used, false)
-
-    // ========== KEY LEVELS SECTION ==========
+    // ========== KEY LEVELS SECTION (persistent) ==========
     table.cell(main_tbl, 0, 0, "⚡ KEY LEVELS", text_color=col_accent, text_size=size.normal, bgcolor=color.new(color.black, 0))
-    table.merge_cells(main_tbl, 0, 0, 6, 0)
+    table.merge_cells(main_tbl, 0, 0, 4, 0)
 
     row_idx = 1
     max_key_rows = 5
-    if array.size(lvl_prices) > 0
-        for offset = 0 to lookback - 1
+    if array.size(hist_prices) > 0
+        for i = array.size(hist_prices) - 1 to 0
             if row_idx > max_key_rows
                 break
 
-            best_idx = -1
-            best_score = 0.0
+            price = array.get(hist_prices, i)
+            ratio = array.get(hist_ratios, i)
+            is_buy = array.get(hist_is_buy, i)
+            score = array.get(hist_scores, i)
+            [hit, stacked_hit, retest_hit, _, _] = active_meta(price)
 
-            for i = 0 to array.size(lvl_prices) - 1
-                if not array.get(lvl_used, i) and array.get(lvl_bars, i) == offset
-                    price = array.get(lvl_prices, i)
-                    ratio = array.get(lvl_ratios, i)
-                    score = array.get(lvl_scores, i)
-                    [hit, _, _, _, _] = active_meta(price)
-                    if ratio >= 3.0 or hit
-                        if best_idx == -1 or score > best_score
-                            best_idx := i
-                            best_score := score
+            if ratio >= 3.0 or hit
+                bg = is_buy ? color.new(col_buy, 55) : color.new(col_sell, 55)
+                side_col = is_buy ? col_buy : col_sell
+                table.cell(main_tbl, 0, row_idx, str.tostring(price, format.mintick), text_color=color.white, text_size=size.small, bgcolor=bg)
+                table.cell(main_tbl, 1, row_idx, stacked_hit ? "⧉" : "", text_color=col_accent, text_size=size.tiny, bgcolor=bg)
+                table.cell(main_tbl, 2, row_idx, retest_hit ? "↺" : "", text_color=col_accent, text_size=size.tiny, bgcolor=bg)
+                table.cell(main_tbl, 3, row_idx, str.tostring(score, "#.##"), text_color=side_col, text_size=size.small, bgcolor=bg)
+                table.cell(main_tbl, 4, row_idx, is_buy ? "BUY" : "SELL", text_color=side_col, text_size=size.small, bgcolor=bg)
+                row_idx += 1
 
-            if best_idx >= 0
-                price = array.get(lvl_prices, best_idx)
-                ratio = array.get(lvl_ratios, best_idx)
-                is_buy = array.get(lvl_is_buy, best_idx)
-                score = array.get(lvl_scores, best_idx)
-                [hit, stacked_hit, retest_hit, _, _] = active_meta(price)
-
-                if ratio >= ob_ratio or (ratio >= 3.0 and hit)
-                    bg = is_buy ? color.new(col_buy, 55) : color.new(col_sell, 55)
-                    side_col = is_buy ? col_buy : col_sell
-                    table.cell(main_tbl, 0, row_idx, str.tostring(price, format.mintick), text_color=color.white, text_size=size.small, bgcolor=bg)
-                    table.cell(main_tbl, 1, row_idx, stacked_hit ? "⧉" : "", text_color=col_accent, text_size=size.tiny, bgcolor=bg)
-                    table.cell(main_tbl, 2, row_idx, retest_hit ? "↺" : "", text_color=col_accent, text_size=size.tiny, bgcolor=bg)
-                    table.cell(main_tbl, 3, row_idx, str.tostring(score, "#.##"), text_color=side_col, text_size=size.small, bgcolor=bg)
-                    table.cell(main_tbl, 4, row_idx, str.tostring(ratio, "#.#") + ":1", text_color=side_col, text_size=size.small, bgcolor=bg)
-                    table.cell(main_tbl, 5, row_idx, is_buy ? "BUY" : "SELL", text_color=side_col, text_size=size.small, bgcolor=bg)
-                    table.cell(main_tbl, 6, row_idx, hit ? "🎯" : "", text_color=col_accent, text_size=size.small, bgcolor=bg)
-
-                    array.set(lvl_used, best_idx, true)
-                    row_idx += 1
-
-    // Fill empty key level rows
-    while row_idx < 6
+    while row_idx <= max_key_rows
         table.cell(main_tbl, 0, row_idx, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
         table.cell(main_tbl, 1, row_idx, "", bgcolor=color.new(color.gray, 85))
         table.cell(main_tbl, 2, row_idx, "", bgcolor=color.new(color.gray, 85))
         table.cell(main_tbl, 3, row_idx, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
         table.cell(main_tbl, 4, row_idx, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
-        table.cell(main_tbl, 5, row_idx, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
-        table.cell(main_tbl, 6, row_idx, "", bgcolor=color.new(color.gray, 85))
         row_idx += 1
 
-    // ========== ORDER FLOW SECTION ==========
-    table.cell(main_tbl, 0, 6, "ORDER FLOW", text_color=col_accent, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.merge_cells(main_tbl, 0, 6, 6, 6)
+    // ========== TOP VOLUME TICKS (rolling 20 bars) ==========
+    table.cell(main_tbl, 5, 0, "TOP TICKS", text_color=col_accent, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.merge_cells(main_tbl, 5, 0, 7, 0)
+    table.cell(main_tbl, 5, 1, "Price", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
+    table.cell(main_tbl, 6, 1, "Vol", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
+    table.cell(main_tbl, 7, 1, "Side", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
 
-    table.cell(main_tbl, 0, 7, "Price", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 1, 7, "Buy", text_color=col_buy, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 2, 7, "Sell", text_color=col_sell, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 3, 7, "Delta", text_color=col_accent, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 4, 7, "Ratio", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 5, 7, "Score", text_color=col_accent, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 6, 7, "Type", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    
-    // Display order flow rows
-    max_rows = 9
-    if array.size(lvl_prices) > 0
-        for i = 0 to math.min(array.size(lvl_prices) - 1, max_rows - 1)
-            price = array.get(lvl_prices, i)
-            bv = array.get(lvl_buys, i)
-            sv = array.get(lvl_sells, i)
-            ratio = array.get(lvl_ratios, i)
-            is_buy = array.get(lvl_is_buy, i)
-            score = array.get(lvl_scores, i)
-            delta = bv - sv
+    array.clear(tick_prices)
+    array.clear(tick_vols)
+    array.clear(tick_sides)
 
-            row = i + 8
+    tick_window = math.min(20, bar_index + 1)
+    for b = 0 to tick_window - 1
+        bucket = math.max(atr14[b] / levels, syminfo.mintick)
+        price_bucket = math.round(close[b] / bucket) * bucket
+        side = close[b] >= open[b] ? "buy" : "sell"
 
-            base_bg = is_buy ? color.new(col_buy, 82) : color.new(col_sell, 82)
-            strong_bg = is_buy ? color.new(col_buy, 65) : color.new(col_sell, 65)
-            mid_bg = is_buy ? color.new(col_buy, 75) : color.new(col_sell, 75)
+        found = false
+        for i = 0 to array.size(tick_prices) - 1
+            if math.abs(array.get(tick_prices, i) - price_bucket) < syminfo.mintick * 0.5
+                array.set(tick_vols, i, array.get(tick_vols, i) + volume[b])
+                array.set(tick_sides, i, side)
+                found := true
+                break
+        if not found
+            array.push(tick_prices, price_bucket)
+            array.push(tick_vols, volume[b])
+            array.push(tick_sides, side)
 
-            bg = mid_bg
-            txt_sz = size.tiny
+    // Rank ticks by volume
+    if array.size(tick_vols) > 1
+        for x = 0 to array.size(tick_vols) - 2
+            for y = 0 to array.size(tick_vols) - x - 2
+                if array.get(tick_vols, y + 1) > array.get(tick_vols, y)
+                    array.swap(tick_vols, y, y + 1)
+                    array.swap(tick_prices, y, y + 1)
+                    array.swap(tick_sides, y, y + 1)
 
-            if ratio >= ob_ratio
-                bg := strong_bg
-                txt_sz := size.small
-            else if ratio >= 4.0
-                bg := mid_bg
-            else
-                bg := base_bg
+    top_rows = 5
+    for i = 0 to top_rows - 1
+        if i < array.size(tick_prices)
+            side = array.get(tick_sides, i)
+            side_col = side == "buy" ? col_buy : col_sell
+            bg = color.new(side_col, 80)
+            table.cell(main_tbl, 5, i + 2, str.tostring(array.get(tick_prices, i), format.mintick), text_color=color.white, text_size=size.tiny, bgcolor=bg)
+            table.cell(main_tbl, 6, i + 2, str.tostring(math.round(array.get(tick_vols, i))), text_color=side_col, text_size=size.tiny, bgcolor=bg)
+            table.cell(main_tbl, 7, i + 2, side == "buy" ? "BUY" : "SELL", text_color=side_col, text_size=size.tiny, bgcolor=bg)
+        else
+            table.cell(main_tbl, 5, i + 2, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
+            table.cell(main_tbl, 6, i + 2, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
+            table.cell(main_tbl, 7, i + 2, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
 
-            table.cell(main_tbl, 0, row, str.tostring(price, format.mintick), text_color=color.white, text_size=txt_sz, bgcolor=bg)
-            table.cell(main_tbl, 1, row, str.tostring(math.round(bv)), text_color=col_buy, text_size=txt_sz, bgcolor=bg)
-            table.cell(main_tbl, 2, row, str.tostring(math.round(sv)), text_color=col_sell, text_size=txt_sz, bgcolor=bg)
-            table.cell(main_tbl, 3, row, str.tostring(math.round(delta)), text_color=delta > 0 ? col_buy : col_sell, text_size=txt_sz, bgcolor=bg)
-            table.cell(main_tbl, 4, row, str.tostring(ratio, "#.#") + ":1", text_color=is_buy ? col_buy : col_sell, text_size=txt_sz, bgcolor=bg)
-            table.cell(main_tbl, 5, row, str.tostring(score, "#.##"), text_color=is_buy ? col_buy : col_sell, text_size=txt_sz, bgcolor=bg)
-            table.cell(main_tbl, 6, row, is_buy ? "BUY" : "SELL", text_color=is_buy ? col_buy : col_sell, text_size=txt_sz, bgcolor=bg)
+    // ========== ORDER FLOW CLUSTERS ==========
+    start_row = 8
+    table.cell(main_tbl, 0, 6, "ORDER FLOW (LAST 6)", text_color=col_accent, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.merge_cells(main_tbl, 0, 6, 7, 6)
 
+    table.cell(main_tbl, 0, 7, "Bar", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
+    table.cell(main_tbl, 1, 7, "Range", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
+    table.cell(main_tbl, 2, 7, "Buy", text_color=col_buy, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
+    table.cell(main_tbl, 3, 7, "Sell", text_color=col_sell, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
+    table.cell(main_tbl, 4, 7, "Δ", text_color=col_accent, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
+    table.cell(main_tbl, 5, 7, "Ratio", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
+    table.cell(main_tbl, 6, 7, "Score", text_color=col_accent, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
+    table.cell(main_tbl, 7, 7, "Side", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
+
+    row = start_row
+    entries = math.min(array.size(cluster_low), 12)
+    for i = 0 to entries - 1
+        bar_off = array.get(cluster_bar, i)
+        bar_label = bar_off == 0 ? "Now" : ("-" + str.tostring(bar_off))
+        lo = array.get(cluster_low, i)
+        hi = array.get(cluster_high, i)
+        bv = array.get(cluster_buy, i)
+        sv = array.get(cluster_sell, i)
+        ratio = array.get(cluster_ratio, i)
+        score = array.get(cluster_score, i)
+        is_buy = array.get(cluster_is_buy, i)
+        delta = bv - sv
+        bg = is_buy ? color.new(col_buy, 78) : color.new(col_sell, 78)
+
+        table.cell(main_tbl, 0, row, bar_label, text_color=color.white, text_size=size.tiny, bgcolor=bg)
+        table.cell(main_tbl, 1, row, str.tostring(lo, format.mintick) + "-" + str.tostring(hi, format.mintick), text_color=color.white, text_size=size.tiny, bgcolor=bg)
+        table.cell(main_tbl, 2, row, str.tostring(math.round(bv)), text_color=col_buy, text_size=size.tiny, bgcolor=bg)
+        table.cell(main_tbl, 3, row, str.tostring(math.round(sv)), text_color=col_sell, text_size=size.tiny, bgcolor=bg)
+        table.cell(main_tbl, 4, row, str.tostring(math.round(delta)), text_color=delta >= 0 ? col_buy : col_sell, text_size=size.tiny, bgcolor=bg)
+        table.cell(main_tbl, 5, row, str.tostring(ratio, "#.#") + ":1", text_color=is_buy ? col_buy : col_sell, text_size=size.tiny, bgcolor=bg)
+        table.cell(main_tbl, 6, row, str.tostring(score, "#.##"), text_color=is_buy ? col_buy : col_sell, text_size=size.tiny, bgcolor=bg)
+        table.cell(main_tbl, 7, row, is_buy ? "BUY" : "SELL", text_color=is_buy ? col_buy : col_sell, text_size=size.tiny, bgcolor=bg)
+        row += 1
+
+    while row < table.height(main_tbl)
+        table.cell(main_tbl, 0, row, "", bgcolor=color.new(color.gray, 90))
+        table.cell(main_tbl, 1, row, "", bgcolor=color.new(color.gray, 90))
+        table.cell(main_tbl, 2, row, "", bgcolor=color.new(color.gray, 90))
+        table.cell(main_tbl, 3, row, "", bgcolor=color.new(color.gray, 90))
+        table.cell(main_tbl, 4, row, "", bgcolor=color.new(color.gray, 90))
+        table.cell(main_tbl, 5, row, "", bgcolor=color.new(color.gray, 90))
+        table.cell(main_tbl, 6, row, "", bgcolor=color.new(color.gray, 90))
+        table.cell(main_tbl, 7, row, "", bgcolor=color.new(color.gray, 90))
+        row += 1
 // ==================== ACTIVE COUNT LABEL ====================
 var label count_lbl = na
 
