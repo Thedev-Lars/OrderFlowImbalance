@@ -261,6 +261,18 @@ record_closed_trade(int idx) =>
         array.push(closed_result, array.get(kl_outcome, idx))
         array.set(kl_closed_logged, idx, true)
 
+finalize_close(int idx, string outcome, float ticks_val) =>
+    // Skip if already logged or index is out of sync
+    bool loggable = idx >= 0 and idx < array.size(kl_state) and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
+    if loggable
+        array.set(kl_realized_ticks, idx, ticks_val)
+        array.set(kl_outcome, idx, outcome)
+        array.set(kl_state, idx, STATE_CLOSED)
+        if idx < array.size(trade_state)
+            array.set(trade_state, idx, outcome == "Profit" ? TE_STATE_CLOSED_WIN : TE_STATE_CLOSED_LOSS)
+        array.set(kl_last_test_bar, idx, bar_index)
+        record_closed_trade(idx)
+
 get_tier(float peak_ratio) =>
     if peak_ratio >= extremeRatio
         TIER_EXTREME
@@ -558,6 +570,10 @@ if barstate.isconfirmed
                     array.set(trade_state, j, array.get(trade_state, j + 1))
                     array.set(trade_state, j + 1, tmp_i)
 
+                    bool tmp_b = array.get(kl_closed_logged, j)
+                    array.set(kl_closed_logged, j, array.get(kl_closed_logged, j + 1))
+                    array.set(kl_closed_logged, j + 1, tmp_b)
+
                     tmp_f := array.get(trade_entry, j)
                     array.set(trade_entry, j, array.get(trade_entry, j + 1))
                     array.set(trade_entry, j + 1, tmp_f)
@@ -641,10 +657,7 @@ if array.size(kl_state) > 0
                 float target_price = array.get(kl_target_price, i)
                 float exit_price = current_state == STATE_PROFIT ? target_price : stop_price
                 float ticks_val = side == "buy" ? (exit_price - entry_price) / syminfo.mintick : (entry_price - exit_price) / syminfo.mintick
-                array.set(kl_realized_ticks, i, ticks_val)
-                array.set(kl_outcome, i, current_state == STATE_PROFIT ? "Profit" : "Loss")
-                array.set(kl_state, i, STATE_CLOSED)
-                record_closed_trade(i)
+                finalize_close(i, current_state == STATE_PROFIT ? "Profit" : "Loss", ticks_val)
 
             // ACTIVE → ENTRY (find valid trade setup)
             else if current_state == STATE_ACTIVE
@@ -723,55 +736,39 @@ if array.size(kl_state) > 0
                 float target = array.get(kl_target_price, i)
                 float entry_price = array.get(kl_entry_price, i)
                 
-                if side == "buy"
-                    // Check for profit (target hit)
-                    if not na(target) and high >= target
-                        float ticks_val = (target - entry_price) / syminfo.mintick
-                        array.set(kl_realized_ticks, i, ticks_val)
-                        array.set(kl_outcome, i, "Profit")
-                        array.set(kl_state, i, STATE_CLOSED)
-                        array.set(kl_test_count, i, test_count + 1)
-                        array.set(kl_reject_count, i, 0)
-                        array.set(kl_last_test_bar, i, bar_index)
-                        record_closed_trade(i)
-                    // Check for stop (with confirmation)
-                    else if not na(stop) and close < stop
-                        reject_count := reject_count + 1
-                        array.set(kl_reject_count, i, reject_count)
-                        if reject_count >= profitConfirmBars
-                            float ticks_val = (stop - entry_price) / syminfo.mintick
-                            array.set(kl_realized_ticks, i, ticks_val)
-                            array.set(kl_outcome, i, "Loss")
-                            array.set(kl_state, i, STATE_CLOSED)
-                            array.set(kl_last_test_bar, i, bar_index)
-                            record_closed_trade(i)
-                    else
-                        array.set(kl_reject_count, i, 0)
+                    if side == "buy"
+                        // Check for profit (target hit)
+                        if not na(target) and high >= target
+                            float ticks_val = (target - entry_price) / syminfo.mintick
+                            array.set(kl_test_count, i, test_count + 1)
+                            array.set(kl_reject_count, i, 0)
+                            finalize_close(i, "Profit", ticks_val)
+                        // Check for stop (with confirmation)
+                        else if not na(stop) and close < stop
+                            reject_count := reject_count + 1
+                            array.set(kl_reject_count, i, reject_count)
+                            if reject_count >= profitConfirmBars
+                                float ticks_val = (stop - entry_price) / syminfo.mintick
+                                finalize_close(i, "Loss", ticks_val)
+                        else
+                            array.set(kl_reject_count, i, 0)
                     
-                else  // sell
-                    // Check for profit (target hit)
-                    if not na(target) and low <= target
-                        float ticks_val = (entry_price - target) / syminfo.mintick
-                        array.set(kl_realized_ticks, i, ticks_val)
-                        array.set(kl_outcome, i, "Profit")
-                        array.set(kl_state, i, STATE_CLOSED)
-                        array.set(kl_test_count, i, test_count + 1)
-                        array.set(kl_reject_count, i, 0)
-                        array.set(kl_last_test_bar, i, bar_index)
-                        record_closed_trade(i)
-                    // Check for stop (with confirmation)
-                    else if not na(stop) and close > stop
-                        reject_count := reject_count + 1
-                        array.set(kl_reject_count, i, reject_count)
-                        if reject_count >= profitConfirmBars
-                            float ticks_val = (entry_price - stop) / syminfo.mintick
-                            array.set(kl_realized_ticks, i, ticks_val)
-                            array.set(kl_outcome, i, "Loss")
-                            array.set(kl_state, i, STATE_CLOSED)
-                            array.set(kl_last_test_bar, i, bar_index)
-                            record_closed_trade(i)
-                    else
-                        array.set(kl_reject_count, i, 0)
+                    else  // sell
+                        // Check for profit (target hit)
+                        if not na(target) and low <= target
+                            float ticks_val = (entry_price - target) / syminfo.mintick
+                            array.set(kl_test_count, i, test_count + 1)
+                            array.set(kl_reject_count, i, 0)
+                            finalize_close(i, "Profit", ticks_val)
+                        // Check for stop (with confirmation)
+                        else if not na(stop) and close > stop
+                            reject_count := reject_count + 1
+                            array.set(kl_reject_count, i, reject_count)
+                            if reject_count >= profitConfirmBars
+                                float ticks_val = (entry_price - stop) / syminfo.mintick
+                                finalize_close(i, "Loss", ticks_val)
+                        else
+                            array.set(kl_reject_count, i, 0)
             
             // PROFIT → HELD
             else if current_state == STATE_PROFIT
@@ -859,22 +856,12 @@ if array.size(trade_state) > 0
                     float ticks_val = side == "buy" ? (target - entry) / syminfo.mintick : (entry - target) / syminfo.mintick
                     array.set(trade_ticks, i, ticks_val)
                     array.set(trade_state, i, TE_STATE_CLOSED_WIN)
-                    if i < array.size(kl_state)
-                        array.set(kl_realized_ticks, i, ticks_val)
-                        array.set(kl_outcome, i, "Profit")
-                        array.set(kl_state, i, STATE_CLOSED)
-                        array.set(kl_last_test_bar, i, bar_index)
-                        record_closed_trade(i)
+                    finalize_close(i, "Profit", ticks_val)
                 else if hit_stop
                     float ticks_val = side == "buy" ? -((entry - stop) / syminfo.mintick) : -((stop - entry) / syminfo.mintick)
                     array.set(trade_ticks, i, ticks_val)
                     array.set(trade_state, i, TE_STATE_CLOSED_LOSS)
-                    if i < array.size(kl_state)
-                        array.set(kl_realized_ticks, i, ticks_val)
-                        array.set(kl_outcome, i, "Loss")
-                        array.set(kl_state, i, STATE_CLOSED)
-                        array.set(kl_last_test_bar, i, bar_index)
-                        record_closed_trade(i)
+                    finalize_close(i, "Loss", ticks_val)
 
 // ============================================================================
 // RENDERING - BOXES AND TRADE LINES
@@ -970,7 +957,8 @@ if array.size(kl_box) > 0
                         array.set(kl_trade_label, i, trade_label)
 
                 else if state == STATE_CLOSED
-                    record_closed_trade(i)
+                    if i < array.size(kl_closed_logged) and not array.get(kl_closed_logged, i)
+                        record_closed_trade(i)
                     line entry_line = array.get(kl_entry_line, i)
                     if not na(entry_line)
                         line.delete(entry_line)
