@@ -158,19 +158,6 @@ var array<int> kl_test_count = array.new<int>()
 var array<box> kl_box = array.new<box>()
 var array<int> kl_last_test_bar = array.new<int>()
 
-// Trade visualization arrays
-var array<float> kl_entry_price = array.new<float>()
-var array<float> kl_stop_price = array.new<float>()
-var array<float> kl_target_price = array.new<float>()
-var array<float> kl_rr_ratio = array.new<float>()
-var array<line> kl_entry_line = array.new<line>()
-var array<line> kl_stop_line = array.new<line>()
-var array<line> kl_target_line = array.new<line>()
-var array<label> kl_trade_label = array.new<label>()
-var array<int> kl_reject_count = array.new<int>()
-var array<string> kl_outcome = array.new<string>()
-var array<float> kl_realized_ticks = array.new<float>()
-
 // Trade Engine v2 scaffolding
 var int TE_STATE_ACTIVE = 0
 var int TE_STATE_POSSIBLE = 1
@@ -184,6 +171,19 @@ var array<float> trade_entry = array.new<float>()
 var array<float> trade_stop = array.new<float>()
 var array<float> trade_target = array.new<float>()
 var array<float> trade_ticks = array.new<float>()
+
+// Trade visualization arrays
+var array<float> kl_entry_price = array.new<float>()
+var array<float> kl_stop_price = array.new<float>()
+var array<float> kl_target_price = array.new<float>()
+var array<float> kl_rr_ratio = array.new<float>()
+var array<line> kl_entry_line = array.new<line>()
+var array<line> kl_stop_line = array.new<line>()
+var array<line> kl_target_line = array.new<line>()
+var array<label> kl_trade_label = array.new<label>()
+var array<int> kl_reject_count = array.new<int>()
+var array<string> kl_outcome = array.new<string>()
+var array<float> kl_realized_ticks = array.new<float>()
 
 // Session management
 var int last_session_day = 0
