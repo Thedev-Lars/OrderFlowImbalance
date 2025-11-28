@@ -440,8 +440,8 @@ if array.size(ob_boxes) > 0
                             stop_price = side == "buy" ? bot_price - (stop_offset_ticks * syminfo.mintick) : top_price + (stop_offset_ticks * syminfo.mintick)
                             risk = math.max(math.abs(entry_price - stop_price), syminfo.mintick)
 
-                            tp1 = na
-                            tp2 = na
+                            float tp1 = na
+                            float tp2 = na
                             if tp_mode == "Opposing Level"
                                 opp = nearest_opposing_price(side, entry_price)
                                 if not na(opp)
