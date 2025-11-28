@@ -643,7 +643,8 @@ if array.size(kl_state) > 0
                     [target, rr] = find_next_target(i, side)
                     if passFilter
                         float entry = poc
-                        float stop_buffer = reject_buffer + bucket_size
+                        // Provide extra breathing room by widening the stop beyond the zone and bucket
+                        float stop_buffer = reject_buffer + (bucket_size * 2)
                         float stop = side == "buy" ? range_bottom - stop_buffer : range_top + stop_buffer
                         float risk = math.abs(entry - stop)
 
@@ -674,13 +675,12 @@ if array.size(kl_state) > 0
             
             // ENTRY → TESTING (trade is live)
             else if current_state == STATE_ENTRY
-                // Only transition when price hits the entry price
+                // Trigger when price trades anywhere through a buffered entry band
                 float entry_price = array.get(kl_entry_price, i)
-                bool triggered = false
-                if side == "buy"
-                    triggered := low <= entry_price
-                else
-                    triggered := high >= entry_price
+                float entry_band = bucket_size + (rejectionBuffer * syminfo.mintick)
+                float entry_high = side == "buy" ? range_top + entry_band : range_bottom - entry_band
+                float entry_low = side == "buy" ? range_bottom - entry_band : range_top + entry_band
+                bool triggered = (low <= entry_high) and (high >= entry_low)
                 if triggered
                     array.set(kl_state, i, STATE_TESTING)
                     // Record bar index when trade goes live
@@ -791,9 +791,10 @@ if array.size(trade_state) > 0
             if ts == TE_STATE_POSSIBLE
                 bool broke_zone = false
                 if not na(stop)
-                    broke_zone := side == "buy" ? (low <= stop) : (high >= stop)
+                    // Require a close beyond the buffered stop to reject, giving wicks room to breathe
+                    broke_zone := side == "buy" ? (close <= stop) : (close >= stop)
                 else
-                    broke_zone := side == "buy" ? (low < range_bottom and high < poc) : (high > range_top and low > poc)
+                    broke_zone := side == "buy" ? (close < range_bottom and high < poc) : (close > range_top and low > poc)
                 if broke_zone
                     array.set(trade_state, i, TE_STATE_REJECTED)
                     if i < array.size(kl_state)
@@ -802,7 +803,10 @@ if array.size(trade_state) > 0
                         array.set(kl_realized_ticks, i, na)
 
             if ts == TE_STATE_POSSIBLE and not na(entry)
-                bool touched_entry = (low <= entry) and (high >= entry)
+                float entry_band = bucket_size + (rejectionBuffer * syminfo.mintick)
+                float entry_high = side == "buy" ? range_top + entry_band : range_bottom - entry_band
+                float entry_low = side == "buy" ? range_bottom - entry_band : range_top + entry_band
+                bool touched_entry = (low <= entry_high) and (high >= entry_low)
                 if touched_entry
                     array.set(trade_state, i, TE_STATE_OPEN)
                     if i < array.size(kl_state)
@@ -813,7 +817,8 @@ if array.size(trade_state) > 0
 
             if ts == TE_STATE_OPEN
                 bool hit_target = side == "buy" ? (not na(target) and high >= target) : (not na(target) and low <= target)
-                bool hit_stop = side == "buy" ? (not na(stop) and low <= stop) : (not na(stop) and high >= stop)
+                // Use closing prices for stop hits so trades aren't cut by shallow wicks
+                bool hit_stop = side == "buy" ? (not na(stop) and close <= stop) : (not na(stop) and close >= stop)
 
                 if hit_target
                     float ticks_val = side == "buy" ? (target - entry) / syminfo.mintick : (entry - target) / syminfo.mintick
