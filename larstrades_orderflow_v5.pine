@@ -15,6 +15,11 @@ max_active_blocks = input.int(5, "Max Active Blocks", minval=2, maxval=10, group
 min_price_gap = input.float(2.0, "Min Points Between Blocks", minval=0.5, step=0.5, group=grp2, tooltip="Gap used to flag stacked blocks")
 ob_lifespan = input.int(200, "Bars to Keep Unfilled Blocks", minval=10, maxval=500, group=grp2)
 
+grp2b = "Trade Cues"
+show_trades = input.bool(true, "Show Trade Markers", group=grp2b, tooltip="Plot entry/stop/targets after retest or fill")
+tp_rr1 = input.float(1.0, "TP1 Reward:Risk", minval=0.5, maxval=3.0, step=0.25, group=grp2b)
+tp_rr2 = input.float(2.0, "TP2 Reward:Risk", minval=1.0, maxval=6.0, step=0.25, group=grp2b)
+
 grp3 = "Colors"
 col_buy = input.color(#00ff41, "Buy (Green)", group=grp3)
 col_sell = input.color(#b968ff, "Sell (Purple)", group=grp3)
@@ -50,6 +55,12 @@ var float[] ob_strengths = array.new_float()
 var bool[] ob_retested = array.new_bool()
 var bool[] ob_stacked = array.new_bool()
 var string[] ob_states = array.new_string()  // active, filled, expired
+
+// Trade marker storage aligned with block indices
+var label[] ob_trade_entry = array.new_label()
+var label[] ob_trade_tp1 = array.new_label()
+var label[] ob_trade_tp2 = array.new_label()
+var label[] ob_trade_stop = array.new_label()
 
 // ==================== AGGRESSIVE RATIO CALCULATION ====================
 calc_level_ratio(float lvl_mid, float h, float l, float o, float c, float v, float rng) =>
@@ -212,6 +223,10 @@ if barstate.isconfirmed and volume > 0 and (high - low) > 0
             array.push(ob_retested, false)
             array.push(ob_stacked, is_stacked)
             array.push(ob_states, "active")
+            array.push(ob_trade_entry, na)
+            array.push(ob_trade_tp1, na)
+            array.push(ob_trade_tp2, na)
+            array.push(ob_trade_stop, na)
 
             new_block_trigger := true
             new_block_message := (best_is_buy ? "New BUY imbalance " : "New SELL imbalance ") +
@@ -253,6 +268,28 @@ if array.size(ob_boxes) > 0
                         box.set_border_color(array.get(ob_boxes, i), color.new(color.gray, 70))
                         box.set_right(array.get(ob_boxes, i), bar_index)
                         label.delete(array.get(ob_labels, i))
+                        if show_trades
+                            entry_lbl = array.get(ob_trade_entry, i)
+                            stop_lbl = array.get(ob_trade_stop, i)
+                            tp1_lbl = array.get(ob_trade_tp1, i)
+                            tp2_lbl = array.get(ob_trade_tp2, i)
+                            done_txt = expired ? "Expired" : "Filled"
+                            if not na(entry_lbl)
+                                label.set_text(entry_lbl, "Entry " + done_txt)
+                                label.set_color(entry_lbl, color.new(color.gray, 70))
+                                label.set_textcolor(entry_lbl, color.gray)
+                            if not na(stop_lbl)
+                                label.set_text(stop_lbl, "Stop " + done_txt)
+                                label.set_color(stop_lbl, color.new(color.gray, 70))
+                                label.set_textcolor(stop_lbl, color.gray)
+                            if not na(tp1_lbl)
+                                label.set_text(tp1_lbl, "TP1 " + done_txt)
+                                label.set_color(tp1_lbl, color.new(color.gray, 70))
+                                label.set_textcolor(tp1_lbl, color.gray)
+                            if not na(tp2_lbl)
+                                label.set_text(tp2_lbl, "TP2 " + done_txt)
+                                label.set_color(tp2_lbl, color.new(color.gray, 70))
+                                label.set_textcolor(tp2_lbl, color.gray)
                         array.set(ob_states, i, filled ? "filled" : "expired")
                         if filled
                             filled_block_trigger := true
@@ -270,6 +307,42 @@ if array.size(ob_boxes) > 0
                             retest_block_message := (side == "buy" ? "BUY" : "SELL") + " imbalance retested at " +
                                  str.tostring(mid_price, format.mintick)
                             already_retested := true
+
+                        // Create or refresh trade markers after a retest
+                        if show_trades
+                            entry_price = (top_price + bot_price) / 2
+                            stop_price = side == "buy" ? bot_price - syminfo.mintick : top_price + syminfo.mintick
+                            risk = math.max(math.abs(entry_price - stop_price), syminfo.mintick)
+                            tp1 = side == "buy" ? entry_price + (risk * tp_rr1) : entry_price - (risk * tp_rr1)
+                            tp2 = side == "buy" ? entry_price + (risk * tp_rr2) : entry_price - (risk * tp_rr2)
+                            side_col = side == "buy" ? col_buy : col_sell
+
+                            entry_lbl = array.get(ob_trade_entry, i)
+                            stop_lbl = array.get(ob_trade_stop, i)
+                            tp1_lbl = array.get(ob_trade_tp1, i)
+                            tp2_lbl = array.get(ob_trade_tp2, i)
+
+                            if retest and na(entry_lbl)
+                                entry_lbl := label.new(bar_index, entry_price, "Entry", color=color.new(color.black, 0), textcolor=side_col, style=label.style_label_left, size=size.tiny)
+                                stop_lbl := label.new(bar_index, stop_price, "Stop", color=color.new(color.red, 10), textcolor=color.red, style=label.style_label_left, size=size.tiny)
+                                tp1_lbl := label.new(bar_index, tp1, "TP1", color=color.new(side_col, 30), textcolor=side_col, style=label.style_label_left, size=size.tiny)
+                                tp2_lbl := label.new(bar_index, tp2, "TP2", color=color.new(side_col, 15), textcolor=side_col, style=label.style_label_left, size=size.tiny)
+                                array.set(ob_trade_entry, i, entry_lbl)
+                                array.set(ob_trade_stop, i, stop_lbl)
+                                array.set(ob_trade_tp1, i, tp1_lbl)
+                                array.set(ob_trade_tp2, i, tp2_lbl)
+                            else if not na(entry_lbl)
+                                label.set_x(entry_lbl, bar_index)
+                                label.set_y(entry_lbl, entry_price)
+                                if not na(stop_lbl)
+                                    label.set_x(stop_lbl, bar_index)
+                                    label.set_y(stop_lbl, stop_price)
+                                if not na(tp1_lbl)
+                                    label.set_x(tp1_lbl, bar_index)
+                                    label.set_y(tp1_lbl, tp1)
+                                if not na(tp2_lbl)
+                                    label.set_x(tp2_lbl, bar_index)
+                                    label.set_y(tp2_lbl, tp2)
 
                         // Update visuals for active state, stacking, and retests
                         base_border = side == "buy" ? col_buy : col_sell
@@ -310,6 +383,19 @@ if array.size(ob_boxes) > 0
                 array.remove(ob_retested, i)
                 array.remove(ob_stacked, i)
                 array.remove(ob_states, i)
+                if i < array.size(ob_trade_entry)
+                    if not na(array.get(ob_trade_entry, i))
+                        label.delete(array.get(ob_trade_entry, i))
+                    if not na(array.get(ob_trade_stop, i))
+                        label.delete(array.get(ob_trade_stop, i))
+                    if not na(array.get(ob_trade_tp1, i))
+                        label.delete(array.get(ob_trade_tp1, i))
+                    if not na(array.get(ob_trade_tp2, i))
+                        label.delete(array.get(ob_trade_tp2, i))
+                    array.remove(ob_trade_entry, i)
+                    array.remove(ob_trade_stop, i)
+                    array.remove(ob_trade_tp1, i)
+                    array.remove(ob_trade_tp2, i)
 
 // ==================== ALERTS ====================
 // Pine requires a const string for the alertcondition message; per-event details are sent via alert() below
@@ -334,6 +420,7 @@ var lvl_sells = array.new_float()
 var lvl_ratios = array.new_float()
 var lvl_is_buy = array.new_bool()
 var lvl_scores = array.new_float()
+var lvl_bars = array.new_int()
 
 if barstate.islast and show_table
     // ========== COLLECT ORDER FLOW LEVELS ==========
@@ -343,6 +430,7 @@ if barstate.islast and show_table
     array.clear(lvl_ratios)
     array.clear(lvl_is_buy)
     array.clear(lvl_scores)
+    array.clear(lvl_bars)
 
     for b = 0 to lookback - 1
         if volume[b] > 0 and (high[b] - low[b]) > 0
@@ -367,6 +455,7 @@ if barstate.islast and show_table
                     array.push(lvl_ratios, ratio)
                     array.push(lvl_is_buy, is_buy)
                     array.push(lvl_scores, score)
+                    array.push(lvl_bars, b)
 
     // Sort by strength score
     if array.size(lvl_scores) > 1
@@ -380,6 +469,7 @@ if barstate.islast and show_table
                     tmp_r = array.get(lvl_ratios, y)
                     tmp_i = array.get(lvl_is_buy, y)
                     tmp_sc = array.get(lvl_scores, y)
+                    tmp_bar = array.get(lvl_bars, y)
 
                     array.set(lvl_prices, y, array.get(lvl_prices, y + 1))
                     array.set(lvl_buys, y, array.get(lvl_buys, y + 1))
@@ -387,6 +477,7 @@ if barstate.islast and show_table
                     array.set(lvl_ratios, y, array.get(lvl_ratios, y + 1))
                     array.set(lvl_is_buy, y, array.get(lvl_is_buy, y + 1))
                     array.set(lvl_scores, y, array.get(lvl_scores, y + 1))
+                    array.set(lvl_bars, y, array.get(lvl_bars, y + 1))
 
                     array.set(lvl_prices, y + 1, tmp_p)
                     array.set(lvl_buys, y + 1, tmp_b)
@@ -394,33 +485,58 @@ if barstate.islast and show_table
                     array.set(lvl_ratios, y + 1, tmp_r)
                     array.set(lvl_is_buy, y + 1, tmp_i)
                     array.set(lvl_scores, y + 1, tmp_sc)
+                    array.set(lvl_bars, y + 1, tmp_bar)
+
+    lvl_used = array.new_bool()
+    if array.size(lvl_prices) > 0
+        for i = 0 to array.size(lvl_prices) - 1
+            array.push(lvl_used, false)
 
     // ========== KEY LEVELS SECTION ==========
     table.cell(main_tbl, 0, 0, "⚡ KEY LEVELS", text_color=col_accent, text_size=size.normal, bgcolor=color.new(color.black, 0))
     table.merge_cells(main_tbl, 0, 0, 6, 0)
 
     row_idx = 1
+    max_key_rows = 5
     if array.size(lvl_prices) > 0
-        for i = 0 to math.min(array.size(lvl_prices) - 1, 4)
-            price = array.get(lvl_prices, i)
-            ratio = array.get(lvl_ratios, i)
-            is_buy = array.get(lvl_is_buy, i)
-            score = array.get(lvl_scores, i)
+        for offset = 0 to lookback - 1
+            if row_idx > max_key_rows
+                break
 
-            // Only keep strong standouts
-            [hit, stacked_hit, retest_hit, _, _] = active_meta(price)
-            if ratio >= ob_ratio or (ratio >= 3.0 and hit)
-                bg = is_buy ? color.new(col_buy, 60) : color.new(col_sell, 60)
-                side_col = is_buy ? col_buy : col_sell
-                table.cell(main_tbl, 0, row_idx, str.tostring(price, format.mintick), text_color=color.white, text_size=size.small, bgcolor=bg)
-                table.cell(main_tbl, 1, row_idx, stacked_hit ? "⧉" : "", text_color=col_accent, text_size=size.tiny, bgcolor=bg)
-                table.cell(main_tbl, 2, row_idx, retest_hit ? "↺" : "", text_color=col_accent, text_size=size.tiny, bgcolor=bg)
-                table.cell(main_tbl, 3, row_idx, str.tostring(score, "#.##"), text_color=col_accent, text_size=size.small, bgcolor=bg)
-                table.cell(main_tbl, 4, row_idx, str.tostring(ratio, "#.#") + ":1", text_color=col_accent, text_size=size.small, bgcolor=bg)
-                table.cell(main_tbl, 5, row_idx, is_buy ? "BUY" : "SELL", text_color=side_col, text_size=size.small, bgcolor=bg)
-                table.cell(main_tbl, 6, row_idx, hit ? "🎯" : "", text_color=col_accent, text_size=size.small, bgcolor=bg)
+            best_idx = -1
+            best_score = 0.0
 
-                row_idx += 1
+            for i = 0 to array.size(lvl_prices) - 1
+                if not array.get(lvl_used, i) and array.get(lvl_bars, i) == offset
+                    price = array.get(lvl_prices, i)
+                    ratio = array.get(lvl_ratios, i)
+                    score = array.get(lvl_scores, i)
+                    [hit, _, _, _, _] = active_meta(price)
+                    if ratio >= 3.0 or hit
+                        if best_idx == -1 or score > best_score
+                            best_idx := i
+                            best_score := score
+
+            if best_idx >= 0
+                price = array.get(lvl_prices, best_idx)
+                ratio = array.get(lvl_ratios, best_idx)
+                is_buy = array.get(lvl_is_buy, best_idx)
+                score = array.get(lvl_scores, best_idx)
+                [hit, stacked_hit, retest_hit, _, _] = active_meta(price)
+
+                if ratio >= ob_ratio or (ratio >= 3.0 and hit)
+                    bg = is_buy ? color.new(col_buy, 55) : color.new(col_sell, 55)
+                    side_col = is_buy ? col_buy : col_sell
+                    table.cell(main_tbl, 0, row_idx, str.tostring(price, format.mintick), text_color=color.white, text_size=size.small, bgcolor=bg)
+                    table.cell(main_tbl, 1, row_idx, stacked_hit ? "⧉" : "", text_color=col_accent, text_size=size.tiny, bgcolor=bg)
+                    table.cell(main_tbl, 2, row_idx, retest_hit ? "↺" : "", text_color=col_accent, text_size=size.tiny, bgcolor=bg)
+                    table.cell(main_tbl, 3, row_idx, str.tostring(score, "#.##"), text_color=side_col, text_size=size.small, bgcolor=bg)
+                    table.cell(main_tbl, 4, row_idx, str.tostring(ratio, "#.#") + ":1", text_color=side_col, text_size=size.small, bgcolor=bg)
+                    table.cell(main_tbl, 5, row_idx, is_buy ? "BUY" : "SELL", text_color=side_col, text_size=size.small, bgcolor=bg)
+                    table.cell(main_tbl, 6, row_idx, hit ? "🎯" : "", text_color=col_accent, text_size=size.small, bgcolor=bg)
+
+                    array.set(lvl_used, best_idx, true)
+                    row_idx += 1
 
     // Fill empty key level rows
     while row_idx < 6
@@ -458,22 +574,28 @@ if barstate.islast and show_table
             delta = bv - sv
 
             row = i + 8
-            
-            bg = color.new(color.black, 85)
+
+            base_bg = is_buy ? color.new(col_buy, 82) : color.new(col_sell, 82)
+            strong_bg = is_buy ? color.new(col_buy, 65) : color.new(col_sell, 65)
+            mid_bg = is_buy ? color.new(col_buy, 75) : color.new(col_sell, 75)
+
+            bg = mid_bg
             txt_sz = size.tiny
-            
+
             if ratio >= ob_ratio
-                bg := is_buy ? color.new(col_buy, 65) : color.new(col_sell, 65)
+                bg := strong_bg
                 txt_sz := size.small
             else if ratio >= 4.0
-                bg := is_buy ? color.new(col_buy, 80) : color.new(col_sell, 80)
-            
+                bg := mid_bg
+            else
+                bg := base_bg
+
             table.cell(main_tbl, 0, row, str.tostring(price, format.mintick), text_color=color.white, text_size=txt_sz, bgcolor=bg)
             table.cell(main_tbl, 1, row, str.tostring(math.round(bv)), text_color=col_buy, text_size=txt_sz, bgcolor=bg)
             table.cell(main_tbl, 2, row, str.tostring(math.round(sv)), text_color=col_sell, text_size=txt_sz, bgcolor=bg)
             table.cell(main_tbl, 3, row, str.tostring(math.round(delta)), text_color=delta > 0 ? col_buy : col_sell, text_size=txt_sz, bgcolor=bg)
-            table.cell(main_tbl, 4, row, str.tostring(ratio, "#.#") + ":1", text_color=col_accent, text_size=txt_sz, bgcolor=bg)
-            table.cell(main_tbl, 5, row, str.tostring(score, "#.##"), text_color=col_accent, text_size=txt_sz, bgcolor=bg)
+            table.cell(main_tbl, 4, row, str.tostring(ratio, "#.#") + ":1", text_color=is_buy ? col_buy : col_sell, text_size=txt_sz, bgcolor=bg)
+            table.cell(main_tbl, 5, row, str.tostring(score, "#.##"), text_color=is_buy ? col_buy : col_sell, text_size=txt_sz, bgcolor=bg)
             table.cell(main_tbl, 6, row, is_buy ? "BUY" : "SELL", text_color=is_buy ? col_buy : col_sell, text_size=txt_sz, bgcolor=bg)
 
 // ==================== ACTIVE COUNT LABEL ====================
