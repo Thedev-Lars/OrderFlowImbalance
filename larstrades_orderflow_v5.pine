@@ -649,19 +649,19 @@ if barstate.islast and show_table
         array.push(cluster_is_buy, false)
         array.push(cluster_bar, b)
 
-            if volume[b] > 0 and (high[b] - low[b]) > 0
-                rng = high[b] - low[b]
-                bucket = math.max(atr14[b] / levels, syminfo.mintick)
-                bucket_count = math.max(1, math.ceil(rng / bucket))
-                bucket_count := math.min(bucket_count, max_buckets_per_bar)
+        if volume[b] > 0 and (high[b] - low[b]) > 0
+            rng = high[b] - low[b]
+            bucket = math.max(atr14[b] / levels, syminfo.mintick)
+            bucket_count = math.max(1, math.ceil(rng / bucket))
+            bucket_count := math.min(bucket_count, max_buckets_per_bar)
 
-                float[] tmp_low = array.new_float()
-                float[] tmp_high = array.new_float()
-                float[] tmp_buy = array.new_float()
-                float[] tmp_sell = array.new_float()
-                float[] tmp_ratio = array.new_float()
-                float[] tmp_score = array.new_float()
-                bool[] tmp_side = array.new_bool()
+            float[] tmp_low = array.new_float()
+            float[] tmp_high = array.new_float()
+            float[] tmp_buy = array.new_float()
+            float[] tmp_sell = array.new_float()
+            float[] tmp_ratio = array.new_float()
+            float[] tmp_score = array.new_float()
+            bool[] tmp_side = array.new_bool()
 
             for j = 0 to bucket_count - 1
                 lvl_bot = low[b] + (j * bucket)
@@ -683,11 +683,11 @@ if barstate.islast and show_table
                     array.push(tmp_score, score)
                     array.push(tmp_side, is_buy)
 
-              // Sort this bar's buckets by score so the strongest sit first
-              if array.size(tmp_score) > 1
-                  for x = 0 to array.size(tmp_score) - 2
-                      for y = 0 to array.size(tmp_score) - x - 2
-                          if array.get(tmp_score, y + 1) > array.get(tmp_score, y)
+            // Sort this bar's buckets by score so the strongest sit first
+            if array.size(tmp_score) > 1
+                for x = 0 to array.size(tmp_score) - 2
+                    for y = 0 to array.size(tmp_score) - x - 2
+                        if array.get(tmp_score, y + 1) > array.get(tmp_score, y)
                             tmp = array.get(tmp_score, y)
                             array.set(tmp_score, y, array.get(tmp_score, y + 1))
                             array.set(tmp_score, y + 1, tmp)
@@ -716,19 +716,19 @@ if barstate.islast and show_table
                             array.set(tmp_side, y, array.get(tmp_side, y + 1))
                             array.set(tmp_side, y + 1, tmpb)
 
-              // Push all buckets for this bar
-              if array.size(tmp_low) > 0
-                  for j = 0 to math.min(array.size(tmp_low) - 1, max_buckets_per_bar - 1)
-                      array.push(cluster_kind, "bucket")
-                      array.push(cluster_label, bar_label)
-                      array.push(cluster_low, array.get(tmp_low, j))
-                      array.push(cluster_high, array.get(tmp_high, j))
-                      array.push(cluster_buy, array.get(tmp_buy, j))
-                      array.push(cluster_sell, array.get(tmp_sell, j))
-                      array.push(cluster_ratio, array.get(tmp_ratio, j))
-                      array.push(cluster_score, array.get(tmp_score, j))
-                      array.push(cluster_is_buy, array.get(tmp_side, j))
-                      array.push(cluster_bar, b)
+            // Push all buckets for this bar
+            if array.size(tmp_low) > 0
+                for j = 0 to math.min(array.size(tmp_low) - 1, max_buckets_per_bar - 1)
+                    array.push(cluster_kind, "bucket")
+                    array.push(cluster_label, bar_label)
+                    array.push(cluster_low, array.get(tmp_low, j))
+                    array.push(cluster_high, array.get(tmp_high, j))
+                    array.push(cluster_buy, array.get(tmp_buy, j))
+                    array.push(cluster_sell, array.get(tmp_sell, j))
+                    array.push(cluster_ratio, array.get(tmp_ratio, j))
+                    array.push(cluster_score, array.get(tmp_score, j))
+                    array.push(cluster_is_buy, array.get(tmp_side, j))
+                    array.push(cluster_bar, b)
 
     // ========== KEY LEVELS SECTION (persistent) ==========
     row_idx = 0
