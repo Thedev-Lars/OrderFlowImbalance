@@ -95,8 +95,28 @@ calc_level_ratio(float lvl_mid, float h, float l, float o, float c, float v, flo
     
     ratio = buy_pct > sell_pct ? buy_pct / sell_pct : sell_pct / buy_pct
     is_buy = buy_pct > sell_pct
-    
+
     [ratio, is_buy, buy_pct]
+
+// ==================== ACTIVE META LOOKUP ====================
+// Helper to flag if a standout level lines up with an active block
+active_meta(float price) =>
+    near_block = false
+    near_stacked = false
+    near_retest = false
+    near_strength = na
+    near_side = ""
+    if array.size(ob_active) > 0
+        for i = 0 to array.size(ob_active) - 1
+            if array.get(ob_active, i)
+                if math.abs(price - array.get(ob_prices, i)) < (min_price_gap / 2)
+                    near_block := true
+                    near_stacked := array.get(ob_stacked, i)
+                    near_retest := array.get(ob_retested, i)
+                    near_strength := array.get(ob_strengths, i)
+                    near_side := array.get(ob_sides, i)
+                    break
+    [near_block, near_stacked, near_retest, near_strength, near_side]
 
 // ==================== PROCESS BARS ====================
 if barstate.isconfirmed and volume > 0 and (high - low) > 0
@@ -373,25 +393,6 @@ if barstate.islast and show_table
                     array.set(lvl_ratios, y + 1, tmp_r)
                     array.set(lvl_is_buy, y + 1, tmp_i)
                     array.set(lvl_scores, y + 1, tmp_sc)
-
-    // Helper to flag if a standout level lines up with an active block
-    active_meta(price) =>
-        near_block = false
-        near_stacked = false
-        near_retest = false
-        near_strength = na
-        near_side = ""
-        if array.size(ob_active) > 0
-            for i = 0 to array.size(ob_active) - 1
-                if array.get(ob_active, i)
-                    if math.abs(price - array.get(ob_prices, i)) < (min_price_gap / 2)
-                        near_block := true
-                        near_stacked := array.get(ob_stacked, i)
-                        near_retest := array.get(ob_retested, i)
-                        near_strength := array.get(ob_strengths, i)
-                        near_side := array.get(ob_sides, i)
-                        break
-        [near_block, near_stacked, near_retest, near_strength, near_side]
 
     // ========== KEY LEVELS SECTION ==========
     table.cell(main_tbl, 0, 0, "⚡ KEY LEVELS", text_color=col_accent, text_size=size.normal, bgcolor=color.new(color.black, 0))
