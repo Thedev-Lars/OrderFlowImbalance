@@ -1133,66 +1133,6 @@ if barstate.islast and not mobileCompact
             for col = 0 to 8
                 table.cell(tbl_key, col, data_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
 
-var table tbl_flow = table.new(position=position.top_right, columns=12, rows=22, bgcolor=color.new(color.black, 85), border_width=1)
-
-// Unified trades table holding possible, open, and closed trades in stacked sections.
-// Uses seven columns to accommodate the closed-trade tick/result data while keeping
-// consistent formatting for possible and open trades.
-var table tbl_trades = table.new(position=position.bottom_left, columns=7, rows=28, bgcolor=color.new(color.black, 85), border_width=1)
-
-if barstate.islast
-    table.cell(tbl_flow, 0, 0, "ORDER FLOW HISTORY", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
-    table.merge_cells(tbl_flow, 0, 0, 11, 0)
-    
-    int safe_bars = math.min(barsToShow, bar_index + 1)
-    int current_row = 1
-    
-    for bar_idx = 0 to 2
-        if bar_idx < safe_bars
-            int col_start = bar_idx * 4
-            int bar_offset = safe_bars - 1 - bar_idx
-            string bar_label = "-" + str.tostring(bar_offset)
-            table.cell(tbl_flow, col_start, current_row, bar_label, text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.gray, 70))
-            table.merge_cells(tbl_flow, col_start, current_row, col_start + 3, current_row)
-    current_row += 1
-    
-    for bar_idx = 0 to 2
-        if bar_idx < safe_bars
-            int col_start = bar_idx * 4
-            table.cell(tbl_flow, col_start + 0, current_row, "Price", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
-            table.cell(tbl_flow, col_start + 1, current_row, "B:S", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
-            table.cell(tbl_flow, col_start + 2, current_row, "Δ", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
-            table.cell(tbl_flow, col_start + 3, current_row, "🔥", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
-    current_row += 1
-    
-    for row = 0 to 7
-        for bar_idx = 0 to 2
-            if bar_idx < safe_bars
-                int col_start = bar_idx * 4
-                int bar_offset = safe_bars - 1 - bar_idx
-                [prices, buys, sells] = calc_bar_levels(bar_offset)
-                int level_count = array.size(prices)
-                if level_count > 0 and row < level_count
-                    int idx = level_count - 1 - row
-                    float price = array.get(prices, idx)
-                    float buy_vol = array.get(buys, idx)
-                    float sell_vol = array.get(sells, idx)
-                    float delta = buy_vol - sell_vol
-                    float ratio = buy_vol >= sell_vol ? buy_vol / math.max(sell_vol, 1) : sell_vol / math.max(buy_vol, 1)
-                    bool is_imbalance = ratio >= imbalanceRatio
-                    color row_bg = is_imbalance ? (buy_vol > sell_vol ? color.new(col_buy, 85) : color.new(col_sell, 85)) : color.new(color.black, 92)
-                    table.cell(tbl_flow, col_start + 0, current_row, str.tostring(price, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                    table.cell(tbl_flow, col_start + 1, current_row, str.tostring(math.round(buy_vol)) + ":" + str.tostring(math.round(sell_vol)), text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                    table.cell(tbl_flow, col_start + 2, current_row, str.tostring(math.round(delta), "+#;-#"), text_color=delta > 0 ? col_buy : col_sell, text_size=size.small, bgcolor=row_bg)
-                    table.cell(tbl_flow, col_start + 3, current_row, is_imbalance ? "🔥" : "", text_color=color.orange, text_size=size.small, bgcolor=row_bg)
-                else
-                    color empty_bg = color.new(color.gray, 95)
-                    table.cell(tbl_flow, col_start + 0, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
-                    table.cell(tbl_flow, col_start + 1, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
-                    table.cell(tbl_flow, col_start + 2, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
-                    table.cell(tbl_flow, col_start + 3, current_row, "", bgcolor=empty_bg)
-        current_row += 1
-
 if barstate.islast and mobileCompact
     color header_bg = color.new(color.gray, 40)
     color section_bg = color.new(color.gray, 70)
@@ -1281,6 +1221,60 @@ if barstate.islast and mobileCompact
             table.cell(tbl_mobile, c, r, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 92))
 
 if barstate.islast and not mobileCompact
+    // ---------------------------------------------------------------------
+    // Order flow table header and recent bars
+    table.cell(tbl_flow, 0, 0, "ORDER FLOW HISTORY", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
+    table.merge_cells(tbl_flow, 0, 0, 11, 0)
+
+    int safe_bars = math.min(barsToShow, bar_index + 1)
+    int current_row = 1
+
+    for bar_idx = 0 to 2
+        if bar_idx < safe_bars
+            int col_start = bar_idx * 4
+            int bar_offset = safe_bars - 1 - bar_idx
+            string bar_label = "-" + str.tostring(bar_offset)
+            table.cell(tbl_flow, col_start, current_row, bar_label, text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.gray, 70))
+            table.merge_cells(tbl_flow, col_start, current_row, col_start + 3, current_row)
+    current_row += 1
+
+    for bar_idx = 0 to 2
+        if bar_idx < safe_bars
+            int col_start = bar_idx * 4
+            table.cell(tbl_flow, col_start + 0, current_row, "Price", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+            table.cell(tbl_flow, col_start + 1, current_row, "B:S", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+            table.cell(tbl_flow, col_start + 2, current_row, "Δ", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+            table.cell(tbl_flow, col_start + 3, current_row, "🔥", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+    current_row += 1
+
+    for row = 0 to 7
+        for bar_idx = 0 to 2
+            if bar_idx < safe_bars
+                int col_start = bar_idx * 4
+                int bar_offset = safe_bars - 1 - bar_idx
+                [prices, buys, sells] = calc_bar_levels(bar_offset)
+                int level_count = array.size(prices)
+                if level_count > 0 and row < level_count
+                    int idx = level_count - 1 - row
+                    float price = array.get(prices, idx)
+                    float buy_vol = array.get(buys, idx)
+                    float sell_vol = array.get(sells, idx)
+                    float delta = buy_vol - sell_vol
+                    float ratio = buy_vol >= sell_vol ? buy_vol / math.max(sell_vol, 1) : sell_vol / math.max(buy_vol, 1)
+                    bool is_imbalance = ratio >= imbalanceRatio
+                    color row_bg = is_imbalance ? (buy_vol > sell_vol ? color.new(col_buy, 85) : color.new(col_sell, 85)) : color.new(color.black, 92)
+                    table.cell(tbl_flow, col_start + 0, current_row, str.tostring(price, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                    table.cell(tbl_flow, col_start + 1, current_row, str.tostring(math.round(buy_vol)) + ":" + str.tostring(math.round(sell_vol)), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                    table.cell(tbl_flow, col_start + 2, current_row, str.tostring(math.round(delta), "+#;-#"), text_color=delta > 0 ? col_buy : col_sell, text_size=size.small, bgcolor=row_bg)
+                    table.cell(tbl_flow, col_start + 3, current_row, is_imbalance ? "🔥" : "", text_color=color.orange, text_size=size.small, bgcolor=row_bg)
+                else
+                    color empty_bg = color.new(color.gray, 95)
+                    table.cell(tbl_flow, col_start + 0, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+                    table.cell(tbl_flow, col_start + 1, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+                    table.cell(tbl_flow, col_start + 2, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+                    table.cell(tbl_flow, col_start + 3, current_row, "", bgcolor=empty_bg)
+        current_row += 1
+
     // ---------------------------------------------------------------------
     // Unified trades table showing possible (ENTRY), open (TESTING) and closed trades.
     int total_levels = array.size(kl_state)
