@@ -6,21 +6,59 @@ grp1 = "Order Flow Table"
 show_table = input.bool(true, "Show Table", group=grp1)
 lookback = input.int(6, "Bars to Analyze", minval=1, maxval=20, group=grp1)
 levels = input.int(5, "Levels per Bar", minval=2, maxval=10, group=grp1)
+max_buckets_per_bar = input.int(8, "Max Buckets per Bar", minval=2, maxval=20, group=grp1)
+top_tick_window = input.int(20, "Bars for Top Ticks", minval=5, maxval=100, group=grp1)
+table_font_size = input.string("normal", "Table Font Size", options=["small", "normal", "large"], group=grp1)
+table_position = input.string("top_right", "Key/Top Table Position", options=["top_right", "middle_right", "middle_left"], group=grp1)
+flow_table_position = input.string("middle_right", "Order Flow Position", options=["middle_right", "bottom_right", "middle_left"], group=grp1)
+flow_rows_cap = input.int(28, "Max Order-Flow Rows", minval=10, maxval=80, group=grp1)
+table_section_spacing = input.int(1, "Section Spacing Rows", minval=0, maxval=3, group=grp1)
+table_max_key_rows = input.int(8, "Max Key Level Rows", minval=3, maxval=15, group=grp1)
+table_max_top_rows = input.int(6, "Max Top Tick Rows", minval=3, maxval=12, group=grp1)
+table_compact = input.bool(false, "Compact Table Mode", group=grp1)
+show_active_count_label = input.bool(false, "Show Active Count Label", group=grp1)
 
 grp2 = "Order Blocks"
 show_blocks = input.bool(true, "Show Order Blocks", group=grp2)
-ob_ratio = input.float(6.0, "Min Ratio for Block", minval=3.0, step=0.5, group=grp2, tooltip="Higher = fewer, stronger blocks")
+ob_ratio = input.float(4.0, "Min Ratio for Block", minval=3.0, step=0.5, group=grp2, tooltip="Higher = fewer, stronger blocks")
 ob_vol_mult = input.float(1.5, "Min Volume Multiplier", minval=1.0, step=0.1, group=grp2, tooltip="Volume must be X times average")
 max_active_blocks = input.int(5, "Max Active Blocks", minval=2, maxval=10, group=grp2)
-min_price_gap = input.float(2.0, "Min Points Between Blocks", minval=0.5, step=0.5, group=grp2, tooltip="Prevents stacking blocks")
+min_price_gap = input.float(2.0, "Min Points Between Blocks", minval=0.5, step=0.5, group=grp2, tooltip="Gap used to flag stacked blocks")
+ob_lifespan = input.int(200, "Bars to Keep Unfilled Blocks", minval=10, maxval=500, group=grp2)
+hist_lifespan = input.int(300, "Key Level Lifespan", minval=50, maxval=1000, group=grp2)
+max_hist_levels = input.int(20, "Max Stored Key Levels", minval=5, maxval=100, group=grp2)
+show_faded_levels = input.bool(false, "Show Filled/Expired Levels", group=grp2)
+inactive_cleanup = input.int(25, "Bars to Keep Inactive Blocks", minval=0, maxval=200, group=grp2, tooltip="How long to leave filled/expired boxes and trade labels on chart; 0 = delete immediately")
+
+grp2b = "Trade Cues"
+show_trades = input.bool(true, "Show Trade Markers", group=grp2b, tooltip="Plot entry/stop/targets after retest or fill")
+tp_rr1 = input.float(1.0, "TP1 Reward:Risk", minval=0.5, maxval=3.0, step=0.25, group=grp2b)
+tp_rr2 = input.float(2.0, "TP2 Reward:Risk", minval=1.0, maxval=6.0, step=0.25, group=grp2b)
+entry_offset_ticks = input.float(0.0, "Entry Offset (ticks)", minval=0.0, maxval=20.0, step=0.5, group=grp2b)
+stop_offset_ticks = input.float(6.0, "Stop Offset (ticks)", minval=0.5, maxval=50.0, step=0.5, group=grp2b)
+tp_mode = input.string("Opposing Level", "TP Mode", options=["Fixed R:R", "Opposing Level"], group=grp2b, tooltip="Use R multiples or nearest opposing imbalance for targets")
 
 grp3 = "Colors"
 col_buy = input.color(#00ff41, "Buy (Green)", group=grp3)
 col_sell = input.color(#b968ff, "Sell (Purple)", group=grp3)
 col_accent = input.color(#ffeb3b, "Accent (Yellow)", group=grp3)
 
+grp4 = "Alerts"
+alert_new_blocks = input.bool(true, "Alert on New Blocks", group=grp4)
+alert_filled_blocks = input.bool(true, "Alert on Filled Blocks", group=grp4)
+alert_retest_blocks = input.bool(true, "Alert on Retest", group=grp4)
+
 // ==================== CALCULATIONS ====================
 avg_vol = ta.sma(volume, 20)
+atr14 = ta.atr(14)
+
+// ==================== ALERT STATE ====================
+new_block_trigger = false
+filled_block_trigger = false
+retest_block_trigger = false
+new_block_message = ""
+filled_block_message = ""
+retest_block_message = ""
 
 // ==================== ORDER BLOCK STORAGE ====================
 var box[] ob_boxes = array.new_box()
@@ -32,6 +70,36 @@ var string[] ob_sides = array.new_string()
 var int[] ob_bars = array.new_int()
 var bool[] ob_active = array.new_bool()
 var float[] ob_ratios = array.new_float()
+var float[] ob_strengths = array.new_float()
+var bool[] ob_retested = array.new_bool()
+var bool[] ob_stacked = array.new_bool()
+var string[] ob_states = array.new_string()  // active, filled, expired
+var string[] ob_trade_state = array.new_string()
+
+// Trade marker storage aligned with block indices
+var label[] ob_trade_entry = array.new_label()
+var label[] ob_trade_tp1 = array.new_label()
+var label[] ob_trade_tp2 = array.new_label()
+var label[] ob_trade_stop = array.new_label()
+var float[] ob_trade_entry_px = array.new_float()
+var float[] ob_trade_stop_px = array.new_float()
+var float[] ob_trade_tp1_px = array.new_float()
+var float[] ob_trade_tp2_px = array.new_float()
+
+// Persistent imbalance history for session memory
+hist_max = 500
+var float[] hist_prices = array.new_float()
+var float[] hist_buys = array.new_float()
+var float[] hist_sells = array.new_float()
+var float[] hist_ratios = array.new_float()
+var bool[] hist_is_buy = array.new_bool()
+var float[] hist_scores = array.new_float()
+var int[] hist_bars = array.new_int()
+var float[] hist_tops = array.new_float()
+var float[] hist_bots = array.new_float()
+var string[] hist_states = array.new_string()  // active, filled, expired
+var bool[] hist_retests = array.new_bool()
+var bool[] hist_stacks = array.new_bool()
 
 // ==================== AGGRESSIVE RATIO CALCULATION ====================
 calc_level_ratio(float lvl_mid, float h, float l, float o, float c, float v, float rng) =>
@@ -77,26 +145,72 @@ calc_level_ratio(float lvl_mid, float h, float l, float o, float c, float v, flo
     
     ratio = buy_pct > sell_pct ? buy_pct / sell_pct : sell_pct / buy_pct
     is_buy = buy_pct > sell_pct
-    
+
     [ratio, is_buy, buy_pct]
 
-// ==================== CHECK IF LEVEL IS TOO CLOSE TO EXISTING ====================
-is_too_close(float price) =>
-    too_close = false
+// ==================== ACTIVE META LOOKUP ====================
+// Helper to flag if a standout level lines up with an active block
+active_meta(float price) =>
+    near_block = false
+    near_stacked = false
+    near_retest = false
+    float near_strength = 0.0
+    near_side = ""
+    if array.size(ob_active) > 0
+        for i = 0 to array.size(ob_active) - 1
+            if array.get(ob_active, i)
+                if math.abs(price - array.get(ob_prices, i)) < (min_price_gap / 2)
+                    near_block := true
+                    near_stacked := array.get(ob_stacked, i)
+                    near_retest := array.get(ob_retested, i)
+                    near_strength := array.get(ob_strengths, i)
+                    near_side := array.get(ob_sides, i)
+                    break
+    [near_block, near_stacked, near_retest, near_strength, near_side]
+
+// Helper to locate a matching history level by price proximity
+find_hist_idx(float mid_price) =>
+    idx = -1
+    if array.size(hist_prices) > 0
+        for i = array.size(hist_prices) - 1 to 0
+            if math.abs(array.get(hist_prices, i) - mid_price) <= min_price_gap
+                idx := i
+                break
+    idx
+
+// Update history entry state flags
+mark_hist_state(int idx, string state, bool retested=false) =>
+    if idx >= 0 and idx < array.size(hist_states)
+        array.set(hist_states, idx, state)
+        if retested
+            array.set(hist_retests, idx, true)
+
+nearest_opposing_price(string side, float ref_price) =>
+    float opp_price = na
+    opp_side = side == "buy" ? "sell" : "buy"
+    // Search active blocks first
     if array.size(ob_prices) > 0
         for i = 0 to array.size(ob_prices) - 1
-            if array.get(ob_active, i)
-                if math.abs(price - array.get(ob_prices, i)) < min_price_gap
-                    too_close := true
-                    break
-    too_close
+            if array.get(ob_active, i) and array.get(ob_sides, i) == opp_side
+                candidate = array.get(ob_prices, i)
+                if na(opp_price) or math.abs(candidate - ref_price) < math.abs(opp_price - ref_price)
+                    opp_price := candidate
+    // Fallback to history
+    if na(opp_price) and array.size(hist_prices) > 0
+        for i = array.size(hist_prices) - 1 to 0
+            if array.get(hist_is_buy, i) != (side == "buy")
+                if array.get(hist_states, i) == "active"
+                    candidate = array.get(hist_prices, i)
+                    if na(opp_price) or math.abs(candidate - ref_price) < math.abs(opp_price - ref_price)
+                        opp_price := candidate
+    opp_price
+
+target_from_rr(string side, float entry_price, float risk, float rr) => side == "buy" ? entry_price + (risk * rr) : entry_price - (risk * rr)
 
 // ==================== PROCESS BARS ====================
 if barstate.isconfirmed and volume > 0 and (high - low) > 0
     rng = high - low
     step = rng / levels
-    vol_qualified = volume >= (avg_vol * ob_vol_mult)
-    
     // Find the BEST level in this candle (highest ratio)
     best_ratio = 0.0
     best_is_buy = false
@@ -119,9 +233,62 @@ if barstate.isconfirmed and volume > 0 and (high - low) > 0
             best_lvl_top := lvl_top
             best_lvl_bot := lvl_bot
             best_lvl_mid := lvl_mid
-    
+
+    // Promote standout levels into persistent history only when they meet block thresholds (ratio + volume)
+    vol_qualified_hist = volume >= (avg_vol * ob_vol_mult)
+    if best_ratio >= ob_ratio and vol_qualified_hist
+        vol_at_lvl = volume / levels
+        bv = vol_at_lvl * best_buy_pct
+        sv = vol_at_lvl * (1 - best_buy_pct)
+        vol_factor = avg_vol > 0 ? vol_at_lvl / avg_vol : 1
+        strength = best_ratio * vol_factor
+
+        existing_idx = find_hist_idx(best_lvl_mid)
+        if existing_idx >= 0
+            array.set(hist_prices, existing_idx, best_lvl_mid)
+            array.set(hist_buys, existing_idx, bv)
+            array.set(hist_sells, existing_idx, sv)
+            array.set(hist_ratios, existing_idx, best_ratio)
+            array.set(hist_is_buy, existing_idx, best_is_buy)
+            array.set(hist_scores, existing_idx, strength)
+            array.set(hist_bars, existing_idx, bar_index)
+            array.set(hist_tops, existing_idx, best_lvl_top)
+            array.set(hist_bots, existing_idx, best_lvl_bot)
+            array.set(hist_states, existing_idx, "active")
+            array.set(hist_retests, existing_idx, false)
+            array.set(hist_stacks, existing_idx, false)
+        else
+            array.push(hist_prices, best_lvl_mid)
+            array.push(hist_buys, bv)
+            array.push(hist_sells, sv)
+            array.push(hist_ratios, best_ratio)
+            array.push(hist_is_buy, best_is_buy)
+            array.push(hist_scores, strength)
+            array.push(hist_bars, bar_index)
+            array.push(hist_tops, best_lvl_top)
+            array.push(hist_bots, best_lvl_bot)
+            array.push(hist_states, "active")
+            array.push(hist_retests, false)
+            array.push(hist_stacks, false)
+
+            // Trim oldest records to avoid bloat
+            while array.size(hist_prices) > math.min(hist_max, max_hist_levels)
+                array.shift(hist_prices)
+                array.shift(hist_buys)
+                array.shift(hist_sells)
+                array.shift(hist_ratios)
+                array.shift(hist_is_buy)
+                array.shift(hist_scores)
+                array.shift(hist_bars)
+                array.shift(hist_tops)
+                array.shift(hist_bots)
+                array.shift(hist_states)
+                array.shift(hist_retests)
+                array.shift(hist_stacks)
+
     // Only create ONE block per candle, and only if it qualifies
-    if show_blocks and best_ratio >= ob_ratio and vol_qualified and not is_too_close(best_lvl_mid)
+    vol_qualified = volume >= (avg_vol * ob_vol_mult) or best_ratio >= ob_ratio + 1.0
+    if show_blocks and best_ratio >= ob_ratio and vol_qualified
         // Count active blocks
         active_count = 0
         if array.size(ob_active) > 0
@@ -150,7 +317,22 @@ if barstate.isconfirmed and volume > 0 and (high - low) > 0
         if can_add
             box_bg = best_is_buy ? color.new(col_buy, 75) : color.new(col_sell, 75)
             box_border = best_is_buy ? col_buy : col_sell
-            
+
+            // Derive strength score that blends ratio and relative volume at the level
+            vol_at_lvl = volume / levels
+            vol_factor = avg_vol > 0 ? vol_at_lvl / avg_vol : 1
+            strength = best_ratio * vol_factor
+
+            // Check for stacking with existing blocks of the same side (close price or consecutive bars)
+            is_stacked = false
+            if array.size(ob_active) > 0
+                for i = 0 to array.size(ob_active) - 1
+                    if array.get(ob_active, i) and array.get(ob_sides, i) == (best_is_buy ? "buy" : "sell")
+                        if math.abs(best_lvl_mid - array.get(ob_prices, i)) <= min_price_gap or bar_index - array.get(ob_bars, i) <= 1
+                            is_stacked := true
+                            array.set(ob_stacked, i, true)
+                            break
+
             new_box = box.new(bar_index, best_lvl_top, bar_index + 200, best_lvl_bot, bgcolor=box_bg, border_color=box_border, border_width=2)
             array.push(ob_boxes, new_box)
             
@@ -167,6 +349,29 @@ if barstate.isconfirmed and volume > 0 and (high - low) > 0
             array.push(ob_bars, bar_index)
             array.push(ob_active, true)
             array.push(ob_ratios, best_ratio)
+            array.push(ob_strengths, strength)
+            array.push(ob_retested, false)
+            array.push(ob_stacked, is_stacked)
+            array.push(ob_states, "active")
+            array.push(ob_trade_state, "planned")
+            array.push(ob_trade_entry, na)
+            array.push(ob_trade_tp1, na)
+            array.push(ob_trade_tp2, na)
+            array.push(ob_trade_stop, na)
+            array.push(ob_trade_entry_px, na)
+            array.push(ob_trade_stop_px, na)
+            array.push(ob_trade_tp1_px, na)
+            array.push(ob_trade_tp2_px, na)
+
+            new_block_trigger := true
+            new_block_message := (best_is_buy ? "New BUY imbalance " : "New SELL imbalance ") +
+                 "at " + str.tostring(best_lvl_mid, format.mintick) + " (" + str.tostring(best_ratio, "#.#") + ":1)"
+
+            // Flag the matching history entry for stacking/retest awareness
+            hist_idx = find_hist_idx(best_lvl_mid)
+            if hist_idx >= 0
+                if is_stacked
+                    array.set(hist_stacks, hist_idx, true)
 
 // ==================== UPDATE ORDER BLOCKS ====================
 if array.size(ob_boxes) > 0
@@ -177,25 +382,179 @@ if array.size(ob_boxes) > 0
                 bot_price = array.get(ob_bots, i)
                 side = array.get(ob_sides, i)
                 start_bar = array.get(ob_bars, i)
-                
+                stacked = array.get(ob_stacked, i)
+                already_retested = array.get(ob_retested, i)
+
                 if bar_index > start_bar
                     filled = false
                     if side == "buy" and low < bot_price
                         filled := true
                     if side == "sell" and high > top_price
                         filled := true
-                    
-                    if filled
+
+                    // Detect retest without full fill
+                    retest = false
+                    if not filled
+                        if side == "buy" and low <= top_price and low >= bot_price
+                            retest := true
+                        if side == "sell" and high >= bot_price and high <= top_price
+                            retest := true
+
+                    // Expire if it has stayed open too long
+                    expired = not filled and (bar_index - start_bar > ob_lifespan)
+
+                    if filled or expired
                         array.set(ob_active, i, false)
-                        box.set_bgcolor(array.get(ob_boxes, i), color.new(color.gray, 90))
-                        box.set_border_color(array.get(ob_boxes, i), color.new(color.gray, 70))
+                        box.set_bgcolor(array.get(ob_boxes, i), color.new(color.gray, 97))
+                        box.set_border_color(array.get(ob_boxes, i), color.new(color.gray, 88))
                         box.set_right(array.get(ob_boxes, i), bar_index)
                         label.delete(array.get(ob_labels, i))
+                        if show_trades
+                            entry_lbl = array.get(ob_trade_entry, i)
+                            stop_lbl = array.get(ob_trade_stop, i)
+                            tp1_lbl = array.get(ob_trade_tp1, i)
+                            tp2_lbl = array.get(ob_trade_tp2, i)
+                            done_txt = expired ? "Expired" : "Filled"
+                            array.set(ob_trade_state, i, expired ? "expired" : "filled")
+                            if not na(entry_lbl)
+                                label.set_text(entry_lbl, "Entry " + done_txt)
+                                label.set_color(entry_lbl, color.new(color.gray, 70))
+                                label.set_textcolor(entry_lbl, color.gray)
+                            if not na(stop_lbl)
+                                label.set_text(stop_lbl, "Stop " + done_txt)
+                                label.set_color(stop_lbl, color.new(color.gray, 70))
+                                label.set_textcolor(stop_lbl, color.gray)
+                            if not na(tp1_lbl)
+                                label.set_text(tp1_lbl, "TP1 " + done_txt)
+                                label.set_color(tp1_lbl, color.new(color.gray, 70))
+                                label.set_textcolor(tp1_lbl, color.gray)
+                            if not na(tp2_lbl)
+                                label.set_text(tp2_lbl, "TP2 " + done_txt)
+                                label.set_color(tp2_lbl, color.new(color.gray, 70))
+                                label.set_textcolor(tp2_lbl, color.gray)
+                        array.set(ob_states, i, filled ? "filled" : "expired")
+                        if filled
+                            filled_block_trigger := true
+                            mid_price = (top_price + bot_price) / 2
+                            filled_block_message := (side == "buy" ? "BUY" : "SELL") + " imbalance filled at " +
+                                 str.tostring(mid_price, format.mintick)
+                            mark_hist_state(find_hist_idx(mid_price), "filled", already_retested)
+                        else
+                            mark_hist_state(find_hist_idx((top_price + bot_price) / 2), "expired", already_retested)
                     else
+                        // Keep extending active blocks forward
                         box.set_right(array.get(ob_boxes, i), bar_index + 30)
+                        array.set(ob_states, i, "active")
+                        if retest and not already_retested
+                            array.set(ob_retested, i, true)
+                            retest_block_trigger := true
+                            mid_price = (top_price + bot_price) / 2
+                            retest_block_message := (side == "buy" ? "BUY" : "SELL") + " imbalance retested at " +
+                                 str.tostring(mid_price, format.mintick)
+                            already_retested := true
+                            mark_hist_state(find_hist_idx(mid_price), "active", true)
+
+                        // Create or refresh trade markers after a retest
+                        if show_trades
+                            entry_price = side == "buy" ? bot_price + (entry_offset_ticks * syminfo.mintick) : top_price - (entry_offset_ticks * syminfo.mintick)
+                            fixed_stop_ticks = 6.0
+                            stop_price = side == "buy" ? bot_price - (fixed_stop_ticks * syminfo.mintick) : top_price + (fixed_stop_ticks * syminfo.mintick)
+                            float tp1 = na
+                            float tp2 = na
+                            opp = nearest_opposing_price(side, entry_price)
+                            if not na(opp)
+                                tp1 := opp
+                                tp2 := opp
+
+                            side_col = side == "buy" ? col_buy : col_sell
+
+                            entry_lbl = array.get(ob_trade_entry, i)
+                            stop_lbl = array.get(ob_trade_stop, i)
+                            tp1_lbl = array.get(ob_trade_tp1, i)
+                            tp2_lbl = array.get(ob_trade_tp2, i)
+
+                            // Store trade math
+                            array.set(ob_trade_entry_px, i, entry_price)
+                            array.set(ob_trade_stop_px, i, stop_price)
+                            array.set(ob_trade_tp1_px, i, tp1)
+                            array.set(ob_trade_tp2_px, i, tp2)
+
+                            // Update trade state transitions
+                            if retest and array.get(ob_trade_state, i) == "planned"
+                                array.set(ob_trade_state, i, "active")
+                            state = array.get(ob_trade_state, i)
+
+                            // Detect outcomes only after activation
+                            if state == "active"
+                                hit_stop = (side == "buy" and low <= stop_price) or (side == "sell" and high >= stop_price)
+                                has_tp = not na(tp1)
+                                hit_tp2 = has_tp and ((side == "buy" and high >= tp2) or (side == "sell" and low <= tp2))
+                                hit_tp1 = has_tp and ((side == "buy" and high >= tp1) or (side == "sell" and low <= tp1))
+                                if hit_stop
+                                    state := "stopped"
+                                else if hit_tp2
+                                    state := "tp2"
+                                else if hit_tp1
+                                    state := "tp1"
+                                array.set(ob_trade_state, i, state)
+
+                            lbl_suffix = state == "active" ? "Entry" : (state == "stopped" ? "Stop ❌" : (state == "tp2" ? "TP2 🎯" : (state == "tp1" ? "TP1 🎯" : (na(tp1) ? "No TP" : "Entry"))))
+                            state_col = state == "stopped" ? color.red : side_col
+                            state_bg = state == "stopped" ? color.new(color.red, 70) : color.new(side_col, 30)
+
+                            if na(entry_lbl)
+                                entry_lbl := label.new(bar_index, entry_price, lbl_suffix, color=state_bg, textcolor=state_col, style=label.style_label_left, size=size.tiny)
+                                stop_lbl := label.new(bar_index, stop_price, "Stop", color=color.new(color.red, 10), textcolor=color.red, style=label.style_label_left, size=size.tiny)
+                                array.set(ob_trade_entry, i, entry_lbl)
+                                array.set(ob_trade_stop, i, stop_lbl)
+                                if not na(tp1)
+                                    tp1_lbl := label.new(bar_index, tp1, "TP", color=color.new(side_col, 30), textcolor=side_col, style=label.style_label_left, size=size.tiny)
+                                    array.set(ob_trade_tp1, i, tp1_lbl)
+                                if not na(tp2)
+                                    tp2_lbl := label.new(bar_index, tp2, "TP", color=color.new(side_col, 15), textcolor=side_col, style=label.style_label_left, size=size.tiny)
+                                    array.set(ob_trade_tp2, i, tp2_lbl)
+                            else
+                                label.set_x(entry_lbl, bar_index)
+                                label.set_y(entry_lbl, entry_price)
+                                label.set_text(entry_lbl, lbl_suffix)
+                                label.set_textcolor(entry_lbl, state_col)
+                                label.set_color(entry_lbl, state_bg)
+                                if not na(stop_lbl)
+                                    label.set_x(stop_lbl, bar_index)
+                                    label.set_y(stop_lbl, stop_price)
+                                if not na(tp1_lbl) and not na(tp1)
+                                    label.set_x(tp1_lbl, bar_index)
+                                    label.set_y(tp1_lbl, tp1)
+                                if not na(tp2_lbl) and not na(tp2)
+                                    label.set_x(tp2_lbl, bar_index)
+                                    label.set_y(tp2_lbl, tp2)
+
+                        // Update visuals for active state, stacking, and retests
+                        base_border = side == "buy" ? col_buy : col_sell
+                        border_col = retest or already_retested ? col_accent : base_border
+                        border_w = stacked or retest or already_retested ? 3 : 2
+                        bg_col = side == "buy" ? color.new(col_buy, stacked ? 65 : 75) : color.new(col_sell, stacked ? 65 : 75)
+                        box.set_border_color(array.get(ob_boxes, i), border_col)
+                        box.set_border_width(array.get(ob_boxes, i), border_w)
+                        box.set_bgcolor(array.get(ob_boxes, i), bg_col)
+
+                        lbl_txt = (side == "buy" ? "BUY " : "SELL ") + str.tostring(array.get(ob_ratios, i), "#.#") + ":1"
+                        if stacked
+                            lbl_txt := lbl_txt + " ⧉"
+                        if retest or already_retested
+                            lbl_txt := lbl_txt + " ↺"
+                        lbl_y = side == "buy" ? top_price : bot_price
+                        lbl_style = side == "buy" ? label.style_label_lower_left : label.style_label_upper_left
+                        label.set_text(array.get(ob_labels, i), lbl_txt)
+                        label.set_color(array.get(ob_labels, i), color.new(border_col, 20))
+                        label.set_textcolor(array.get(ob_labels, i), color.white)
+                        label.set_style(array.get(ob_labels, i), lbl_style)
+                        label.set_x(array.get(ob_labels, i), bar_index)
+                        label.set_y(array.get(ob_labels, i), lbl_y)
             
             // Remove old blocks
-            if not array.get(ob_active, i) and bar_index - array.get(ob_bars, i) > 100
+            inactive_age = bar_index - array.get(ob_bars, i)
+            if not array.get(ob_active, i) and (inactive_cleanup == 0 or inactive_age > inactive_cleanup)
                 box.delete(array.get(ob_boxes, i))
                 array.remove(ob_boxes, i)
                 array.remove(ob_labels, i)
@@ -206,165 +565,442 @@ if array.size(ob_boxes) > 0
                 array.remove(ob_bars, i)
                 array.remove(ob_active, i)
                 array.remove(ob_ratios, i)
+                array.remove(ob_strengths, i)
+                array.remove(ob_retested, i)
+                array.remove(ob_stacked, i)
+                array.remove(ob_states, i)
+                array.remove(ob_trade_state, i)
+                if i < array.size(ob_trade_entry)
+                    if not na(array.get(ob_trade_entry, i))
+                        label.delete(array.get(ob_trade_entry, i))
+                    if not na(array.get(ob_trade_stop, i))
+                        label.delete(array.get(ob_trade_stop, i))
+                    if not na(array.get(ob_trade_tp1, i))
+                        label.delete(array.get(ob_trade_tp1, i))
+                    if not na(array.get(ob_trade_tp2, i))
+                        label.delete(array.get(ob_trade_tp2, i))
+                    array.remove(ob_trade_entry, i)
+                    array.remove(ob_trade_stop, i)
+                    array.remove(ob_trade_tp1, i)
+                    array.remove(ob_trade_tp2, i)
+                    array.remove(ob_trade_entry_px, i)
+                    array.remove(ob_trade_stop_px, i)
+                    array.remove(ob_trade_tp1_px, i)
+                    array.remove(ob_trade_tp2_px, i)
+
+// ==================== ALERTS ====================
+// Pine requires a const string for the alertcondition message; per-event details are sent via alert() below
+alertcondition(alert_new_blocks and new_block_trigger, "New imbalance zone", "New imbalance zone")
+alertcondition(alert_retest_blocks and retest_block_trigger, "Imbalance retested", "Imbalance retested")
+alertcondition(alert_filled_blocks and filled_block_trigger, "Imbalance filled", "Imbalance filled")
+
+if barstate.isconfirmed
+    if alert_new_blocks and new_block_trigger and str.length(new_block_message) > 0
+        alert(new_block_message, alert.freq_once_per_bar_close)
+    if alert_retest_blocks and retest_block_trigger and str.length(retest_block_message) > 0
+        alert(retest_block_message, alert.freq_once_per_bar_close)
+    if alert_filled_blocks and filled_block_trigger and str.length(filled_block_message) > 0
+        alert(filled_block_message, alert.freq_once_per_bar_close)
 
 // ==================== TABLES ====================
-var table main_tbl = table.new(position.middle_right, 6, 18, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
+// Typography helpers for consistent sizing
+tbl_size(string opt) =>
+    opt == "large" ? size.large : (opt == "normal" ? size.normal : size.small)
 
-var lvl_prices = array.new_float()
-var lvl_buys = array.new_float()
-var lvl_sells = array.new_float()
-var lvl_ratios = array.new_float()
-var lvl_is_buy = array.new_bool()
+base_size = tbl_size(table_font_size)
+header_size = table_font_size == "large" ? size.large : size.normal
+sub_size = table_font_size == "small" ? size.small : size.tiny
+
+// Main table (Key Levels + Top Ticks) kept compact; flow table separated to reduce height
+main_rows = 4 + table_max_key_rows + table_max_top_rows + (table_section_spacing * 4)
+main_rows := math.max(main_rows, 24)
+flow_header_rows = 1 + (table_compact ? 0 : 1)
+ideal_flow_rows = flow_header_rows + lookback
+flow_rows = math.max(flow_header_rows + 1, math.min(flow_rows_cap, ideal_flow_rows))
+rows_for_clusters = math.max(1, flow_rows - flow_header_rows)
+clusters_per_bar_limit = math.max(1, math.min(max_buckets_per_bar, math.max(1, math.floor(rows_for_clusters / lookback))))
+tbl_pos = table_position == "top_right" ? position.top_right : (table_position == "middle_left" ? position.middle_left : position.middle_right)
+flow_pos = flow_table_position == "middle_left" ? position.middle_left : (flow_table_position == "bottom_right" ? position.bottom_right : position.middle_right)
+var table main_tbl = table.new(tbl_pos, 8, main_rows, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
+var table flow_tbl = table.new(flow_pos, 8, flow_rows, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
+
+// Scratch arrays for clustered order flow (per bar)
+var float[] cluster_low = array.new_float()
+var float[] cluster_high = array.new_float()
+var float[] cluster_buy = array.new_float()
+var float[] cluster_sell = array.new_float()
+var float[] cluster_ratio = array.new_float()
+var float[] cluster_score = array.new_float()
+var bool[] cluster_is_buy = array.new_bool()
+var int[] cluster_bar = array.new_int()
+var string[] cluster_kind = array.new_string()  // header or bucket
+var string[] cluster_label = array.new_string()
+
+// Scratch arrays for top-tick panel (rolling ranks)
+var float[] tick_prices = array.new_float()
+var float[] tick_vols = array.new_float()
+var string[] tick_sides = array.new_string()
 
 if barstate.islast and show_table
-    // ========== KEY LEVELS SECTION ==========
-    table.cell(main_tbl, 0, 0, "⚡ KEY LEVELS", text_color=col_accent, text_size=size.normal, bgcolor=color.new(color.black, 0))
-    table.merge_cells(main_tbl, 0, 0, 5, 0)
-    
-    // Count and display active blocks
-    row_idx = 1
-    if array.size(ob_active) > 0
-        for i = 0 to array.size(ob_active) - 1
-            if array.get(ob_active, i) and row_idx < 6
-                price = array.get(ob_prices, i)
-                ratio = array.get(ob_ratios, i)
-                side = array.get(ob_sides, i)
-                is_buy = side == "buy"
-                
-                bg = is_buy ? color.new(col_buy, 60) : color.new(col_sell, 60)
-                side_col = is_buy ? col_buy : col_sell
-                
-                table.cell(main_tbl, 0, row_idx, str.tostring(price, format.mintick), text_color=color.white, text_size=size.small, bgcolor=bg)
-                table.cell(main_tbl, 1, row_idx, "", bgcolor=bg)
-                table.cell(main_tbl, 2, row_idx, "", bgcolor=bg)
-                table.cell(main_tbl, 3, row_idx, str.tostring(ratio, "#.#") + ":1", text_color=col_accent, text_size=size.small, bgcolor=bg)
-                table.cell(main_tbl, 4, row_idx, is_buy ? "BUY" : "SELL", text_color=side_col, text_size=size.small, bgcolor=bg)
-                table.cell(main_tbl, 5, row_idx, "🎯", text_color=col_accent, text_size=size.small, bgcolor=bg)
-                
-                row_idx += 1
-    
-    // Fill empty key level rows
-    while row_idx < 6
-        table.cell(main_tbl, 0, row_idx, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
-        table.cell(main_tbl, 1, row_idx, "", bgcolor=color.new(color.gray, 85))
-        table.cell(main_tbl, 2, row_idx, "", bgcolor=color.new(color.gray, 85))
-        table.cell(main_tbl, 3, row_idx, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
-        table.cell(main_tbl, 4, row_idx, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
-        table.cell(main_tbl, 5, row_idx, "", bgcolor=color.new(color.gray, 85))
-        row_idx += 1
-    
-    // ========== ORDER FLOW SECTION ==========
-    table.cell(main_tbl, 0, 6, "ORDER FLOW", text_color=col_accent, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.merge_cells(main_tbl, 0, 6, 5, 6)
-    
-    table.cell(main_tbl, 0, 7, "Price", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 1, 7, "Buy", text_color=col_buy, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 2, 7, "Sell", text_color=col_sell, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 3, 7, "Delta", text_color=col_accent, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 4, 7, "Ratio", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 5, 7, "Type", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    
-    // Collect level data
-    array.clear(lvl_prices)
-    array.clear(lvl_buys)
-    array.clear(lvl_sells)
-    array.clear(lvl_ratios)
-    array.clear(lvl_is_buy)
-    
-    tick_size = ta.atr(14) / levels
-    
-    for b = 0 to lookback - 1
+    // Clear cluster scratch arrays
+    array.clear(cluster_low)
+    array.clear(cluster_high)
+    array.clear(cluster_buy)
+    array.clear(cluster_sell)
+    array.clear(cluster_ratio)
+    array.clear(cluster_score)
+    array.clear(cluster_is_buy)
+    array.clear(cluster_bar)
+    array.clear(cluster_kind)
+    array.clear(cluster_label)
+
+    // Build clusters for the last N bars using ATR-sized buckets, grouped per bar
+    cluster_bars = math.min(lookback, bar_index + 1)
+    ratio_floor = math.max(2.0, ob_ratio)
+    for b = 0 to cluster_bars - 1
+        bar_label = b == 0 ? "Now" : ("-" + str.tostring(b))
+        array.push(cluster_kind, "header")
+        array.push(cluster_label, bar_label)
+        array.push(cluster_low, na)
+        array.push(cluster_high, na)
+        array.push(cluster_buy, na)
+        array.push(cluster_sell, na)
+        array.push(cluster_ratio, na)
+        array.push(cluster_score, na)
+        array.push(cluster_is_buy, false)
+        array.push(cluster_bar, b)
+
         if volume[b] > 0 and (high[b] - low[b]) > 0
             rng = high[b] - low[b]
-            step = rng / levels
-            
-            for j = 0 to levels - 1
-                lvl_bot = low[b] + (j * step)
-                lvl_mid = lvl_bot + (step / 2)
-                
-                [ratio, is_buy, buy_pct] = calc_level_ratio(lvl_mid, high[b], low[b], open[b], close[b], volume[b], rng)
-                
-                vol_at_lvl = volume[b] / levels
-                bv = vol_at_lvl * buy_pct
-                sv = vol_at_lvl * (1 - buy_pct)
-                
-                if ratio >= 2.0
-                    array.push(lvl_prices, lvl_mid)
-                    array.push(lvl_buys, bv)
-                    array.push(lvl_sells, sv)
-                    array.push(lvl_ratios, ratio)
-                    array.push(lvl_is_buy, is_buy)
-    
-    // Sort by ratio
-    if array.size(lvl_ratios) > 1
-        sort_size = array.size(lvl_ratios)
-        for x = 0 to math.min(sort_size - 1, 50)
-            for y = 0 to sort_size - 2
-                if array.get(lvl_ratios, y + 1) > array.get(lvl_ratios, y)
-                    tmp_p = array.get(lvl_prices, y)
-                    tmp_b = array.get(lvl_buys, y)
-                    tmp_s = array.get(lvl_sells, y)
-                    tmp_r = array.get(lvl_ratios, y)
-                    tmp_i = array.get(lvl_is_buy, y)
-                    
-                    array.set(lvl_prices, y, array.get(lvl_prices, y + 1))
-                    array.set(lvl_buys, y, array.get(lvl_buys, y + 1))
-                    array.set(lvl_sells, y, array.get(lvl_sells, y + 1))
-                    array.set(lvl_ratios, y, array.get(lvl_ratios, y + 1))
-                    array.set(lvl_is_buy, y, array.get(lvl_is_buy, y + 1))
-                    
-                    array.set(lvl_prices, y + 1, tmp_p)
-                    array.set(lvl_buys, y + 1, tmp_b)
-                    array.set(lvl_sells, y + 1, tmp_s)
-                    array.set(lvl_ratios, y + 1, tmp_r)
-                    array.set(lvl_is_buy, y + 1, tmp_i)
-    
-    // Display order flow rows
-    max_rows = 9
-    if array.size(lvl_prices) > 0
-        for i = 0 to math.min(array.size(lvl_prices) - 1, max_rows - 1)
-            price = array.get(lvl_prices, i)
-            bv = array.get(lvl_buys, i)
-            sv = array.get(lvl_sells, i)
-            ratio = array.get(lvl_ratios, i)
-            is_buy = array.get(lvl_is_buy, i)
-            delta = bv - sv
-            
-            row = i + 8
-            
-            bg = color.new(color.black, 85)
-            txt_sz = size.tiny
-            
-            if ratio >= ob_ratio
-                bg := is_buy ? color.new(col_buy, 65) : color.new(col_sell, 65)
-                txt_sz := size.small
-            else if ratio >= 4.0
-                bg := is_buy ? color.new(col_buy, 80) : color.new(col_sell, 80)
-            
-            table.cell(main_tbl, 0, row, str.tostring(price, format.mintick), text_color=color.white, text_size=txt_sz, bgcolor=bg)
-            table.cell(main_tbl, 1, row, str.tostring(math.round(bv)), text_color=col_buy, text_size=txt_sz, bgcolor=bg)
-            table.cell(main_tbl, 2, row, str.tostring(math.round(sv)), text_color=col_sell, text_size=txt_sz, bgcolor=bg)
-            table.cell(main_tbl, 3, row, str.tostring(math.round(delta)), text_color=delta > 0 ? col_buy : col_sell, text_size=txt_sz, bgcolor=bg)
-            table.cell(main_tbl, 4, row, str.tostring(ratio, "#.#") + ":1", text_color=col_accent, text_size=txt_sz, bgcolor=bg)
-            table.cell(main_tbl, 5, row, is_buy ? "BUY" : "SELL", text_color=is_buy ? col_buy : col_sell, text_size=txt_sz, bgcolor=bg)
+            bucket = math.max(atr14[b] / levels, syminfo.mintick)
+            bucket_count = math.max(1, math.ceil(rng / bucket))
+            bucket_count := math.min(bucket_count, max_buckets_per_bar)
 
+            float[] tmp_low = array.new_float()
+            float[] tmp_high = array.new_float()
+            float[] tmp_buy = array.new_float()
+            float[] tmp_sell = array.new_float()
+            float[] tmp_ratio = array.new_float()
+            float[] tmp_score = array.new_float()
+            bool[] tmp_side = array.new_bool()
+
+            for j = 0 to bucket_count - 1
+                lvl_bot = low[b] + (j * bucket)
+                lvl_top = math.min(lvl_bot + bucket, high[b])
+                lvl_mid = (lvl_bot + lvl_top) / 2
+
+                [ratio, is_buy, buy_pct] = calc_level_ratio(lvl_mid, high[b], low[b], open[b], close[b], volume[b], rng)
+                bucket_vol = volume[b] / bucket_count
+                bv = bucket_vol * buy_pct
+                sv = bucket_vol * (1 - buy_pct)
+                score = ratio * (avg_vol > 0 ? bucket_vol / avg_vol : 1)
+
+                hist_match = find_hist_idx(lvl_mid)
+                hist_is_active = hist_match >= 0 and array.get(hist_states, hist_match) == "active"
+
+                if ratio >= ratio_floor and not hist_is_active
+                    array.push(tmp_low, lvl_bot)
+                    array.push(tmp_high, lvl_top)
+                    array.push(tmp_buy, bv)
+                    array.push(tmp_sell, sv)
+                    array.push(tmp_ratio, ratio)
+                    array.push(tmp_score, score)
+                    array.push(tmp_side, is_buy)
+
+            // Sort this bar's buckets by score so the strongest sit first
+            if array.size(tmp_score) > 1
+                for x = 0 to array.size(tmp_score) - 2
+                    for y = 0 to array.size(tmp_score) - x - 2
+                        if array.get(tmp_score, y + 1) > array.get(tmp_score, y)
+                            tmp = array.get(tmp_score, y)
+                            array.set(tmp_score, y, array.get(tmp_score, y + 1))
+                            array.set(tmp_score, y + 1, tmp)
+
+                            tmpf = array.get(tmp_low, y)
+                            array.set(tmp_low, y, array.get(tmp_low, y + 1))
+                            array.set(tmp_low, y + 1, tmpf)
+
+                            tmpf := array.get(tmp_high, y)
+                            array.set(tmp_high, y, array.get(tmp_high, y + 1))
+                            array.set(tmp_high, y + 1, tmpf)
+
+                            tmpf := array.get(tmp_buy, y)
+                            array.set(tmp_buy, y, array.get(tmp_buy, y + 1))
+                            array.set(tmp_buy, y + 1, tmpf)
+
+                            tmpf := array.get(tmp_sell, y)
+                            array.set(tmp_sell, y, array.get(tmp_sell, y + 1))
+                            array.set(tmp_sell, y + 1, tmpf)
+
+                            tmpf := array.get(tmp_ratio, y)
+                            array.set(tmp_ratio, y, array.get(tmp_ratio, y + 1))
+                            array.set(tmp_ratio, y + 1, tmpf)
+
+                            tmpb = array.get(tmp_side, y)
+                            array.set(tmp_side, y, array.get(tmp_side, y + 1))
+                            array.set(tmp_side, y + 1, tmpb)
+
+            // Push all buckets for this bar
+            if array.size(tmp_low) > 0
+                per_bar_limit = math.min(array.size(tmp_low), clusters_per_bar_limit)
+                for j = 0 to int(per_bar_limit) - 1
+                    array.push(cluster_kind, "bucket")
+                    array.push(cluster_label, bar_label)
+                    array.push(cluster_low, array.get(tmp_low, j))
+                    array.push(cluster_high, array.get(tmp_high, j))
+                    array.push(cluster_buy, array.get(tmp_buy, j))
+                    array.push(cluster_sell, array.get(tmp_sell, j))
+                    array.push(cluster_ratio, array.get(tmp_ratio, j))
+                    array.push(cluster_score, array.get(tmp_score, j))
+                    array.push(cluster_is_buy, array.get(tmp_side, j))
+                    array.push(cluster_bar, b)
+
+    // ========== KEY LEVELS SECTION (persistent) ==========
+    row_idx = 0
+    table.cell(main_tbl, 0, row_idx, "KEY LEVELS", text_color=color.black, text_size=header_size, bgcolor=color.new(col_accent, 0), text_halign=text.align_left)
+    table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+    row_idx += 1
+
+    // Optional divider/buffer rows for breathing room
+    spacer = table_compact ? 0 : table_section_spacing
+    for _ = 0 to spacer - 1
+        if row_idx < main_rows
+            table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+            table.cell(main_tbl, 0, row_idx, "──────", text_color=color.new(color.gray, 20), text_size=sub_size, bgcolor=color.new(color.black, 90))
+            row_idx += 1
+
+    // Expire stale historical levels
+    if array.size(hist_prices) > 0
+        for i = 0 to array.size(hist_prices) - 1
+            if array.get(hist_states, i) == "active" and bar_index - array.get(hist_bars, i) > hist_lifespan
+                array.set(hist_states, i, "expired")
+
+    max_key_rows = table_max_key_rows
+    if array.size(hist_prices) > 0
+        for i = array.size(hist_prices) - 1 to 0
+            if row_idx >= main_rows or row_idx - spacer >= max_key_rows + 1
+                break
+
+            ratio = array.get(hist_ratios, i)
+            is_buy = array.get(hist_is_buy, i)
+            score = array.get(hist_scores, i)
+            state = array.get(hist_states, i)
+            stacked_hit = array.get(hist_stacks, i)
+            retest_hit = array.get(hist_retests, i)
+            top_rng = array.get(hist_tops, i)
+            bot_rng = array.get(hist_bots, i)
+            age = bar_index - array.get(hist_bars, i)
+
+            actionable = state == "active" or show_faded_levels
+            if actionable and (ratio >= 3.0 or state != "expired")
+                active_state = state == "active"
+                side_col = is_buy ? col_buy : col_sell
+                bg = active_state ? color.new(side_col, 82) : color.new(color.gray, 86)
+                side_icon = is_buy ? "🟢" : "🟣"
+                flag_icon = (stacked_hit ? "🧱" : "") + (retest_hit ? "🎯" : "") + (state != "active" ? "❌" : "")
+                range_txt = str.tostring(bot_rng, format.mintick) + " - " + str.tostring(top_rng, format.mintick)
+                age_txt = "+" + str.tostring(age) + " bars"
+                ratio_txt = str.tostring(ratio, "#.#") + ":1"
+                score_txt = str.tostring(score, "#.##")
+                state_txt = state == "active" ? "OPEN" : (state == "filled" ? "FILLED" : "EXPIRED")
+
+                table.cell(main_tbl, 0, row_idx, side_icon, text_color=side_col, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+                table.cell(main_tbl, 1, row_idx, range_txt, text_color=color.white, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+                table.cell(main_tbl, 2, row_idx, state_txt, text_color=side_col, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+                table.cell(main_tbl, 3, row_idx, age_txt, text_color=color.new(color.white, 0), text_size=sub_size, bgcolor=bg, text_halign=text.align_right)
+                table.cell(main_tbl, 4, row_idx, ratio_txt, text_color=side_col, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+                table.cell(main_tbl, 5, row_idx, score_txt, text_color=side_col, text_size=sub_size, bgcolor=bg, text_halign=text.align_right)
+                table.cell(main_tbl, 6, row_idx, flag_icon, text_color=col_accent, text_size=sub_size, bgcolor=bg, text_halign=text.align_left)
+                table.cell(main_tbl, 7, row_idx, is_buy ? "BUY" : "SELL", text_color=side_col, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+                row_idx += 1
+
+    while row_idx - spacer < max_key_rows + 1 and row_idx < main_rows
+        filler_bg = color.new(color.gray, 90)
+        table.cell(main_tbl, 0, row_idx, "", bgcolor=filler_bg)
+        table.cell(main_tbl, 1, row_idx, "", bgcolor=filler_bg)
+        table.cell(main_tbl, 2, row_idx, "", bgcolor=filler_bg)
+        table.cell(main_tbl, 3, row_idx, "", bgcolor=filler_bg)
+        table.cell(main_tbl, 4, row_idx, "", bgcolor=filler_bg)
+        table.cell(main_tbl, 5, row_idx, "", bgcolor=filler_bg)
+        table.cell(main_tbl, 6, row_idx, "", bgcolor=filler_bg)
+        table.cell(main_tbl, 7, row_idx, "", bgcolor=filler_bg)
+        row_idx += 1
+
+    // Breathing room before next section
+    spacer_rows = table_compact ? 0 : table_section_spacing
+    for _ = 0 to spacer_rows - 1
+        if row_idx < main_rows
+            table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+            table.cell(main_tbl, 0, row_idx, "", bgcolor=color.new(color.black, 85))
+            row_idx += 1
+
+    // ========== TOP VOLUME TICKS (rolling window) ==========
+    if row_idx < main_rows
+        table.cell(main_tbl, 0, row_idx, "TOP TICKS", text_color=color.black, text_size=header_size, bgcolor=color.new(col_accent, 0), text_halign=text.align_left)
+        table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+        row_idx += 1
+
+    if not table_compact and row_idx < main_rows
+        table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+        table.cell(main_tbl, 0, row_idx, "──────", text_color=color.new(color.gray, 20), text_size=sub_size, bgcolor=color.new(color.black, 90))
+        row_idx += 1
+
+    array.clear(tick_prices)
+    array.clear(tick_vols)
+    array.clear(tick_sides)
+
+    tick_window = math.min(top_tick_window, bar_index + 1)
+    for b = 0 to tick_window - 1
+        if volume[b] > 0 and (high[b] - low[b]) > 0
+            rng = high[b] - low[b]
+            bucket = math.max(atr14[b] / levels, syminfo.mintick)
+            bucket_count = math.max(1, math.ceil(rng / bucket))
+            bucket_count := math.min(bucket_count, max_buckets_per_bar)
+            for j = 0 to bucket_count - 1
+                lvl_bot = low[b] + (j * bucket)
+                lvl_top = math.min(lvl_bot + bucket, high[b])
+                lvl_mid = (lvl_bot + lvl_top) / 2
+                [_, is_buy, buy_pct] = calc_level_ratio(lvl_mid, high[b], low[b], open[b], close[b], volume[b], rng)
+                bucket_vol = volume[b] / bucket_count
+                bv = bucket_vol * buy_pct
+                sv = bucket_vol * (1 - buy_pct)
+                total_vol = bv + sv
+                dom_side = bv >= sv ? "buy" : "sell"
+
+                found = false
+                if array.size(tick_prices) > 0
+                    for i = 0 to array.size(tick_prices) - 1
+                        if math.abs(array.get(tick_prices, i) - lvl_mid) <= bucket * 0.5
+                            array.set(tick_vols, i, array.get(tick_vols, i) + total_vol)
+                            array.set(tick_sides, i, dom_side)
+                            found := true
+                            break
+                if not found
+                    array.push(tick_prices, lvl_mid)
+                    array.push(tick_vols, total_vol)
+                    array.push(tick_sides, dom_side)
+
+    if array.size(tick_vols) > 1
+        for x = 0 to array.size(tick_vols) - 2
+            for y = 0 to array.size(tick_vols) - x - 2
+                if array.get(tick_vols, y + 1) > array.get(tick_vols, y)
+                    tmp_vol = array.get(tick_vols, y)
+                    tmp_price = array.get(tick_prices, y)
+                    tmp_side = array.get(tick_sides, y)
+
+                    array.set(tick_vols, y, array.get(tick_vols, y + 1))
+                    array.set(tick_prices, y, array.get(tick_prices, y + 1))
+                    array.set(tick_sides, y, array.get(tick_sides, y + 1))
+
+                    array.set(tick_vols, y + 1, tmp_vol)
+                    array.set(tick_prices, y + 1, tmp_price)
+                    array.set(tick_sides, y + 1, tmp_side)
+
+    for i = 0 to table_max_top_rows - 1
+        if row_idx >= main_rows
+            break
+        if i < array.size(tick_prices)
+            side = array.get(tick_sides, i)
+            side_col = side == "buy" ? col_buy : col_sell
+            bg = color.new(side_col, 82)
+            table.cell(main_tbl, 0, row_idx, side == "buy" ? "🟢" : "🟣", text_color=side_col, text_size=base_size, bgcolor=bg)
+            table.cell(main_tbl, 1, row_idx, str.tostring(array.get(tick_prices, i), format.mintick), text_color=color.white, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+            table.cell(main_tbl, 2, row_idx, str.tostring(math.round(array.get(tick_vols, i))), text_color=side_col, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+            table.merge_cells(main_tbl, 3, row_idx, 7, row_idx)
+            table.cell(main_tbl, 3, row_idx, side == "buy" ? "BUY" : "SELL", text_color=side_col, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+        else
+            for c = 0 to 7
+                table.cell(main_tbl, c, row_idx, "", bgcolor=color.new(color.gray, 90))
+        row_idx += 1
+
+    spacer_rows := table_compact ? 0 : table_section_spacing
+    for _ = 0 to spacer_rows - 1
+        if row_idx < main_rows
+            table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+            table.cell(main_tbl, 0, row_idx, "", bgcolor=color.new(color.black, 85))
+            row_idx += 1
+
+    // Pad remaining main table rows after Key Levels and Top Ticks
+    while row_idx < main_rows
+        table.cell(main_tbl, 0, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 1, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 2, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 3, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 4, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 5, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 6, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 7, row_idx, "", bgcolor=color.new(color.gray, 92))
+        row_idx += 1
+
+    // ==================== ORDER FLOW CLUSTERS (separate flow table) ====================
+    flow_row = 0
+    table.cell(flow_tbl, 0, flow_row, "ORDER FLOW CLUSTERS", text_color=color.black, text_size=header_size, bgcolor=color.new(col_accent, 0), text_halign=text.align_left)
+    table.merge_cells(flow_tbl, 0, flow_row, 7, flow_row)
+    flow_row += 1
+
+    if not table_compact and flow_row < flow_rows
+        table.merge_cells(flow_tbl, 0, flow_row, 7, flow_row)
+        table.cell(flow_tbl, 0, flow_row, "──────", text_color=color.new(color.gray, 20), text_size=sub_size, bgcolor=color.new(color.black, 90))
+        flow_row += 1
+
+    for i = 0 to array.size(cluster_kind) - 1
+        if flow_row >= flow_rows
+            break
+        kind = array.get(cluster_kind, i)
+        if kind == "header"
+            hdr = array.get(cluster_label, i)
+            table.cell(flow_tbl, 0, flow_row, "BAR " + hdr, text_color=color.white, text_size=base_size, bgcolor=color.new(color.gray, 75), text_halign=text.align_left)
+            table.merge_cells(flow_tbl, 0, flow_row, 7, flow_row)
+            flow_row += 1
+        else
+            lo = array.get(cluster_low, i)
+            hi = array.get(cluster_high, i)
+            bv = array.get(cluster_buy, i)
+            sv = array.get(cluster_sell, i)
+            ratio = array.get(cluster_ratio, i)
+            score = array.get(cluster_score, i)
+            is_buy = array.get(cluster_is_buy, i)
+            delta = bv - sv
+            bg = is_buy ? color.new(col_buy, 82) : color.new(col_sell, 82)
+
+            table.cell(flow_tbl, 0, flow_row, is_buy ? "🟢" : "🟣", text_color=is_buy ? col_buy : col_sell, text_size=sub_size, bgcolor=bg)
+            table.cell(flow_tbl, 1, flow_row, str.tostring(lo, format.mintick) + " - " + str.tostring(hi, format.mintick), text_color=color.white, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+            table.cell(flow_tbl, 2, flow_row, str.tostring(math.round(bv)), text_color=col_buy, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+            table.cell(flow_tbl, 3, flow_row, str.tostring(math.round(sv)), text_color=col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+            table.cell(flow_tbl, 4, flow_row, str.tostring(math.round(delta)), text_color=delta >= 0 ? col_buy : col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+            table.cell(flow_tbl, 5, flow_row, str.tostring(ratio, "#.#") + ":1", text_color=is_buy ? col_buy : col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+            table.cell(flow_tbl, 6, flow_row, str.tostring(score, "#.##"), text_color=is_buy ? col_buy : col_sell, text_size=sub_size, bgcolor=bg, text_halign=text.align_right)
+            table.cell(flow_tbl, 7, flow_row, is_buy ? "BUY" : "SELL", text_color=is_buy ? col_buy : col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+            flow_row += 1
+
+    while flow_row < flow_rows
+        table.cell(flow_tbl, 0, flow_row, "", bgcolor=color.new(color.gray, 92))
+        table.cell(flow_tbl, 1, flow_row, "", bgcolor=color.new(color.gray, 92))
+        table.cell(flow_tbl, 2, flow_row, "", bgcolor=color.new(color.gray, 92))
+        table.cell(flow_tbl, 3, flow_row, "", bgcolor=color.new(color.gray, 92))
+        table.cell(flow_tbl, 4, flow_row, "", bgcolor=color.new(color.gray, 92))
+        table.cell(flow_tbl, 5, flow_row, "", bgcolor=color.new(color.gray, 92))
+        table.cell(flow_tbl, 6, flow_row, "", bgcolor=color.new(color.gray, 92))
+        table.cell(flow_tbl, 7, flow_row, "", bgcolor=color.new(color.gray, 92))
+        flow_row += 1
 // ==================== ACTIVE COUNT LABEL ====================
 var label count_lbl = na
 
 if barstate.islast
     if not na(count_lbl)
         label.delete(count_lbl)
-    
-    buy_cnt = 0
-    sell_cnt = 0
-    if array.size(ob_active) > 0
-        for i = 0 to array.size(ob_active) - 1
-            if array.get(ob_active, i)
-                if array.get(ob_sides, i) == "buy"
-                    buy_cnt += 1
-                else
-                    sell_cnt += 1
-    
-    if buy_cnt > 0 or sell_cnt > 0
-        txt = str.tostring(buy_cnt + sell_cnt) + " KEY"
-        count_lbl := label.new(bar_index + 2, high, txt, color=color.new(col_accent, 20), textcolor=color.black, style=label.style_label_left, size=size.normal)
+
+    if show_active_count_label
+        buy_cnt = 0
+        sell_cnt = 0
+        if array.size(ob_active) > 0
+            for i = 0 to array.size(ob_active) - 1
+                if array.get(ob_active, i)
+                    if array.get(ob_sides, i) == "buy"
+                        buy_cnt += 1
+                    else
+                        sell_cnt += 1
+
+        if buy_cnt > 0 or sell_cnt > 0
+            txt = str.tostring(buy_cnt + sell_cnt) + " KEY"
+            count_lbl := label.new(bar_index + 2, high, txt, color=color.new(col_accent, 20), textcolor=color.black, style=label.style_label_left, size=size.normal)
