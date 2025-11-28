@@ -626,12 +626,14 @@ if barstate.islast and show_table
         side = close[b] >= open[b] ? "buy" : "sell"
 
         found = false
-        for i = 0 to array.size(tick_prices) - 1
-            if math.abs(array.get(tick_prices, i) - price_bucket) < syminfo.mintick * 0.5
-                array.set(tick_vols, i, array.get(tick_vols, i) + volume[b])
-                array.set(tick_sides, i, side)
-                found := true
-                break
+        // Guard against empty arrays to avoid out-of-bounds access on the first iteration
+        if array.size(tick_prices) > 0
+            for i = 0 to array.size(tick_prices) - 1
+                if math.abs(array.get(tick_prices, i) - price_bucket) < syminfo.mintick * 0.5
+                    array.set(tick_vols, i, array.get(tick_vols, i) + volume[b])
+                    array.set(tick_sides, i, side)
+                    found := true
+                    break
         if not found
             array.push(tick_prices, price_bucket)
             array.push(tick_vols, volume[b])
