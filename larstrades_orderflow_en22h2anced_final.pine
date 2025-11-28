@@ -643,22 +643,30 @@ if array.size(kl_state) > 0
                     [target, rr] = find_next_target(i, side)
                     if passFilter
                         float entry = poc
-                        float stop = side == "buy" ? range_bottom - reject_buffer : range_top + reject_buffer
-                        // Only open a trade if the opposing level exists and meets the minimum RR
-                        if not na(target) and rr >= minRR
+                        float stop_buffer = reject_buffer + bucket_size
+                        float stop = side == "buy" ? range_bottom - stop_buffer : range_top + stop_buffer
+                        float risk = math.abs(entry - stop)
+
+                        // Prefer opposing level targets that meet RR; otherwise fall back to a synthetic target using minRR
+                        float target_to_use = target
+                        float rr_to_use = rr
+                        if na(target_to_use) or rr_to_use < minRR
+                            target_to_use := side == "buy" ? entry + (risk * minRR) : entry - (risk * minRR)
+                            rr_to_use := minRR
+
+                        if risk > 0
                             array.set(kl_entry_price, i, entry)
                             array.set(kl_stop_price, i, stop)
-                            array.set(kl_target_price, i, target)
-                            array.set(kl_rr_ratio, i, rr)
+                            array.set(kl_target_price, i, target_to_use)
+                            array.set(kl_rr_ratio, i, rr_to_use)
                             array.set(kl_state, i, STATE_ENTRY)
                             array.set(trade_state, i, TE_STATE_POSSIBLE)
                             array.set(trade_entry, i, entry)
                             array.set(trade_stop, i, stop)
-                            array.set(trade_target, i, target)
+                            array.set(trade_target, i, target_to_use)
                             array.set(trade_ticks, i, na)
                             array.set(kl_last_test_bar, i, bar_index)
                         else
-                            // No valid opposing level or RR too low – remain ACTIVE and record touch
                             array.set(kl_last_test_bar, i, bar_index)
                     else
                         // Filters not satisfied – remain ACTIVE and record touch
@@ -780,7 +788,7 @@ if array.size(trade_state) > 0
             float range_bottom = array.get(kl_range_bottom, i)
             float poc = array.get(kl_poc, i)
 
-            if ts == TE_STATE_ACTIVE
+            if ts == TE_STATE_POSSIBLE
                 bool broke_zone = side == "buy" ? (low < range_bottom and high < poc) : (high > range_top and low > poc)
                 if broke_zone
                     array.set(trade_state, i, TE_STATE_REJECTED)
