@@ -5,8 +5,8 @@ A TradingView Pine Script indicator that highlights intrabar order-flow imbalanc
 - Detects the strongest buy/sell imbalance in each bar and draws an order block that tracks until filled or expires.
 - Filters blocks by configurable imbalance ratio, volume multiplier, spacing, lifespan, and maximum active count (default ratio 4:1).
 - Flags stacked imbalances (same-side blocks close in price or on consecutive bars) and retests of open blocks directly on chart boxes and in the Key Levels table.
-- Surfaces standout intrabar imbalances with a persistent Key Levels memory (keeps notable ratios since the script was loaded) while preferring the freshest bars first and marking when an active block sits on top of the level.
-- Displays per-bar order-flow clusters for the last six candles using ATR-sized price buckets (green for buys, purple for sells), plus a rolling “top ticks” strip that ranks the highest-volume price buckets over the last ~20 bars by actual intra-bar bucket volume.
+- Surfaces standout intrabar imbalances with a persistent Key Levels memory (keeps notable ratios since the script was loaded) while preferring the freshest bars first and marking when an active block sits on top of the level; only levels that meet both the ratio and volume thresholds are promoted into this list.
+- Displays per-bar order-flow clusters for the last six candles using ATR-sized price buckets (green for buys, purple for sells) on a separate flow table, plus a rolling “top ticks” strip that ranks the highest-volume price buckets over the last ~20 bars by actual intra-bar bucket volume (not just the bar close).
 - Persists key levels across the session with state (open/filled/expired), age, and retest/stack flags so recent imbalances remain visible even after scrolling.
 - (Optional) Draws compact trade markers (entry/stop/TP1/TP2) whenever a block is retested, and greys them out when the block is filled or expires; stops sit 6 ticks beyond the zone edge and targets prefer the nearest opposing imbalance (falling back to R:R only if nothing is found).
 - Alerts fire for new imbalance blocks, retests of active zones, and when an active block is filled.

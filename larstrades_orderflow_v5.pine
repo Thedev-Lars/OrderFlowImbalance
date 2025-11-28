@@ -231,41 +231,57 @@ if barstate.isconfirmed and volume > 0 and (high - low) > 0
             best_lvl_bot := lvl_bot
             best_lvl_mid := lvl_mid
 
-    // Log standout level into persistent history (keeps session memory alive)
-    if best_ratio >= 2.0
+    // Promote standout levels into persistent history only when they meet block thresholds (ratio + volume)
+    vol_qualified_hist = volume >= (avg_vol * ob_vol_mult)
+    if best_ratio >= ob_ratio and vol_qualified_hist
         vol_at_lvl = volume / levels
         bv = vol_at_lvl * best_buy_pct
         sv = vol_at_lvl * (1 - best_buy_pct)
         vol_factor = avg_vol > 0 ? vol_at_lvl / avg_vol : 1
         strength = best_ratio * vol_factor
 
-        array.push(hist_prices, best_lvl_mid)
-        array.push(hist_buys, bv)
-        array.push(hist_sells, sv)
-        array.push(hist_ratios, best_ratio)
-        array.push(hist_is_buy, best_is_buy)
-        array.push(hist_scores, strength)
-        array.push(hist_bars, bar_index)
-        array.push(hist_tops, best_lvl_top)
-        array.push(hist_bots, best_lvl_bot)
-        array.push(hist_states, "active")
-        array.push(hist_retests, false)
-        array.push(hist_stacks, false)
+        existing_idx = find_hist_idx(best_lvl_mid)
+        if existing_idx >= 0
+            array.set(hist_prices, existing_idx, best_lvl_mid)
+            array.set(hist_buys, existing_idx, bv)
+            array.set(hist_sells, existing_idx, sv)
+            array.set(hist_ratios, existing_idx, best_ratio)
+            array.set(hist_is_buy, existing_idx, best_is_buy)
+            array.set(hist_scores, existing_idx, strength)
+            array.set(hist_bars, existing_idx, bar_index)
+            array.set(hist_tops, existing_idx, best_lvl_top)
+            array.set(hist_bots, existing_idx, best_lvl_bot)
+            array.set(hist_states, existing_idx, "active")
+            array.set(hist_retests, existing_idx, false)
+            array.set(hist_stacks, existing_idx, false)
+        else
+            array.push(hist_prices, best_lvl_mid)
+            array.push(hist_buys, bv)
+            array.push(hist_sells, sv)
+            array.push(hist_ratios, best_ratio)
+            array.push(hist_is_buy, best_is_buy)
+            array.push(hist_scores, strength)
+            array.push(hist_bars, bar_index)
+            array.push(hist_tops, best_lvl_top)
+            array.push(hist_bots, best_lvl_bot)
+            array.push(hist_states, "active")
+            array.push(hist_retests, false)
+            array.push(hist_stacks, false)
 
-        // Trim oldest records to avoid bloat
-        while array.size(hist_prices) > math.min(hist_max, max_hist_levels)
-            array.shift(hist_prices)
-            array.shift(hist_buys)
-            array.shift(hist_sells)
-            array.shift(hist_ratios)
-            array.shift(hist_is_buy)
-            array.shift(hist_scores)
-            array.shift(hist_bars)
-            array.shift(hist_tops)
-            array.shift(hist_bots)
-            array.shift(hist_states)
-            array.shift(hist_retests)
-            array.shift(hist_stacks)
+            // Trim oldest records to avoid bloat
+            while array.size(hist_prices) > math.min(hist_max, max_hist_levels)
+                array.shift(hist_prices)
+                array.shift(hist_buys)
+                array.shift(hist_sells)
+                array.shift(hist_ratios)
+                array.shift(hist_is_buy)
+                array.shift(hist_scores)
+                array.shift(hist_bars)
+                array.shift(hist_tops)
+                array.shift(hist_bots)
+                array.shift(hist_states)
+                array.shift(hist_retests)
+                array.shift(hist_stacks)
 
     // Only create ONE block per candle, and only if it qualifies
     vol_qualified = volume >= (avg_vol * ob_vol_mult) or best_ratio >= ob_ratio + 1.0
@@ -601,7 +617,7 @@ flow_rows := math.min(flow_rows, 70)
 tbl_pos = table_position == "top_right" ? position.top_right : (table_position == "middle_left" ? position.middle_left : position.middle_right)
 flow_pos = flow_table_position == "middle_left" ? position.middle_left : (flow_table_position == "bottom_right" ? position.bottom_right : position.middle_right)
 var table main_tbl = table.new(tbl_pos, 8, main_rows, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
-var table flow_tbl = table.new(flow_pos, 7, flow_rows, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
+var table flow_tbl = table.new(flow_pos, 8, flow_rows, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
 
 // Scratch arrays for clustered order flow (per bar)
 var float[] cluster_low = array.new_float()
@@ -674,7 +690,10 @@ if barstate.islast and show_table
                 sv = bucket_vol * (1 - buy_pct)
                 score = ratio * (avg_vol > 0 ? bucket_vol / avg_vol : 1)
 
-                if ratio >= ratio_floor
+                hist_match = find_hist_idx(lvl_mid)
+                hist_is_active = hist_match >= 0 and array.get(hist_states, hist_match) == "active"
+
+                if ratio >= ratio_floor and not hist_is_active
                     array.push(tmp_low, lvl_bot)
                     array.push(tmp_high, lvl_top)
                     array.push(tmp_buy, bv)
@@ -895,26 +914,38 @@ if barstate.islast and show_table
             table.cell(main_tbl, 0, row_idx, "", bgcolor=color.new(color.black, 85))
             row_idx += 1
 
-    // ========== ORDER FLOW CLUSTERS ==========
-    if row_idx < main_rows
-        table.cell(main_tbl, 0, row_idx, "ORDER FLOW CLUSTERS", text_color=color.black, text_size=header_size, bgcolor=color.new(col_accent, 0), text_halign=text.align_left)
-        table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+    // Pad remaining main table rows after Key Levels and Top Ticks
+    while row_idx < main_rows
+        table.cell(main_tbl, 0, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 1, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 2, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 3, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 4, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 5, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 6, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 7, row_idx, "", bgcolor=color.new(color.gray, 92))
         row_idx += 1
 
-    if not table_compact and row_idx < main_rows
-        table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
-        table.cell(main_tbl, 0, row_idx, "──────", text_color=color.new(color.gray, 20), text_size=sub_size, bgcolor=color.new(color.black, 90))
-        row_idx += 1
+    // ==================== ORDER FLOW CLUSTERS (separate flow table) ====================
+    flow_row = 0
+    table.cell(flow_tbl, 0, flow_row, "ORDER FLOW CLUSTERS", text_color=color.black, text_size=header_size, bgcolor=color.new(col_accent, 0), text_halign=text.align_left)
+    table.merge_cells(flow_tbl, 0, flow_row, 7, flow_row)
+    flow_row += 1
+
+    if not table_compact and flow_row < flow_rows
+        table.merge_cells(flow_tbl, 0, flow_row, 7, flow_row)
+        table.cell(flow_tbl, 0, flow_row, "──────", text_color=color.new(color.gray, 20), text_size=sub_size, bgcolor=color.new(color.black, 90))
+        flow_row += 1
 
     for i = 0 to array.size(cluster_kind) - 1
-        if row_idx >= main_rows
+        if flow_row >= flow_rows
             break
         kind = array.get(cluster_kind, i)
         if kind == "header"
             hdr = array.get(cluster_label, i)
-            table.cell(main_tbl, 0, row_idx, "BAR " + hdr, text_color=color.white, text_size=base_size, bgcolor=color.new(color.gray, 75), text_halign=text.align_left)
-            table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
-            row_idx += 1
+            table.cell(flow_tbl, 0, flow_row, "BAR " + hdr, text_color=color.white, text_size=base_size, bgcolor=color.new(color.gray, 75), text_halign=text.align_left)
+            table.merge_cells(flow_tbl, 0, flow_row, 7, flow_row)
+            flow_row += 1
         else
             lo = array.get(cluster_low, i)
             hi = array.get(cluster_high, i)
@@ -926,26 +957,26 @@ if barstate.islast and show_table
             delta = bv - sv
             bg = is_buy ? color.new(col_buy, 82) : color.new(col_sell, 82)
 
-            table.cell(main_tbl, 0, row_idx, is_buy ? "🟢" : "🟣", text_color=is_buy ? col_buy : col_sell, text_size=sub_size, bgcolor=bg)
-            table.cell(main_tbl, 1, row_idx, str.tostring(lo, format.mintick) + " - " + str.tostring(hi, format.mintick), text_color=color.white, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
-            table.cell(main_tbl, 2, row_idx, str.tostring(math.round(bv)), text_color=col_buy, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
-            table.cell(main_tbl, 3, row_idx, str.tostring(math.round(sv)), text_color=col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
-            table.cell(main_tbl, 4, row_idx, str.tostring(math.round(delta)), text_color=delta >= 0 ? col_buy : col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
-            table.cell(main_tbl, 5, row_idx, str.tostring(ratio, "#.#") + ":1", text_color=is_buy ? col_buy : col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
-            table.cell(main_tbl, 6, row_idx, str.tostring(score, "#.##"), text_color=is_buy ? col_buy : col_sell, text_size=sub_size, bgcolor=bg, text_halign=text.align_right)
-            table.cell(main_tbl, 7, row_idx, is_buy ? "BUY" : "SELL", text_color=is_buy ? col_buy : col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
-            row_idx += 1
+            table.cell(flow_tbl, 0, flow_row, is_buy ? "🟢" : "🟣", text_color=is_buy ? col_buy : col_sell, text_size=sub_size, bgcolor=bg)
+            table.cell(flow_tbl, 1, flow_row, str.tostring(lo, format.mintick) + " - " + str.tostring(hi, format.mintick), text_color=color.white, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+            table.cell(flow_tbl, 2, flow_row, str.tostring(math.round(bv)), text_color=col_buy, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+            table.cell(flow_tbl, 3, flow_row, str.tostring(math.round(sv)), text_color=col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+            table.cell(flow_tbl, 4, flow_row, str.tostring(math.round(delta)), text_color=delta >= 0 ? col_buy : col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+            table.cell(flow_tbl, 5, flow_row, str.tostring(ratio, "#.#") + ":1", text_color=is_buy ? col_buy : col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+            table.cell(flow_tbl, 6, flow_row, str.tostring(score, "#.##"), text_color=is_buy ? col_buy : col_sell, text_size=sub_size, bgcolor=bg, text_halign=text.align_right)
+            table.cell(flow_tbl, 7, flow_row, is_buy ? "BUY" : "SELL", text_color=is_buy ? col_buy : col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+            flow_row += 1
 
-    while row_idx < main_rows
-        table.cell(main_tbl, 0, row_idx, "", bgcolor=color.new(color.gray, 92))
-        table.cell(main_tbl, 1, row_idx, "", bgcolor=color.new(color.gray, 92))
-        table.cell(main_tbl, 2, row_idx, "", bgcolor=color.new(color.gray, 92))
-        table.cell(main_tbl, 3, row_idx, "", bgcolor=color.new(color.gray, 92))
-        table.cell(main_tbl, 4, row_idx, "", bgcolor=color.new(color.gray, 92))
-        table.cell(main_tbl, 5, row_idx, "", bgcolor=color.new(color.gray, 92))
-        table.cell(main_tbl, 6, row_idx, "", bgcolor=color.new(color.gray, 92))
-        table.cell(main_tbl, 7, row_idx, "", bgcolor=color.new(color.gray, 92))
-        row_idx += 1
+    while flow_row < flow_rows
+        table.cell(flow_tbl, 0, flow_row, "", bgcolor=color.new(color.gray, 92))
+        table.cell(flow_tbl, 1, flow_row, "", bgcolor=color.new(color.gray, 92))
+        table.cell(flow_tbl, 2, flow_row, "", bgcolor=color.new(color.gray, 92))
+        table.cell(flow_tbl, 3, flow_row, "", bgcolor=color.new(color.gray, 92))
+        table.cell(flow_tbl, 4, flow_row, "", bgcolor=color.new(color.gray, 92))
+        table.cell(flow_tbl, 5, flow_row, "", bgcolor=color.new(color.gray, 92))
+        table.cell(flow_tbl, 6, flow_row, "", bgcolor=color.new(color.gray, 92))
+        table.cell(flow_tbl, 7, flow_row, "", bgcolor=color.new(color.gray, 92))
+        flow_row += 1
 // ==================== ACTIVE COUNT LABEL ====================
 var label count_lbl = na
 
