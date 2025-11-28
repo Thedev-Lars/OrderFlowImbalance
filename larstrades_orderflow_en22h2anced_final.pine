@@ -1,0 +1,1136 @@
+//@version=6
+indicator("LarsTrades Order Flow Zones", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// Order Flow Settings
+imbalanceRatio = input.float(3.0, "Imbalance Ratio Threshold", minval=2.0, step=0.1, group="Order Flow Detection")
+minLevelVolume = input.int(10, "Min Volume Per Level", minval=1, group="Order Flow Detection")
+priceLevelsPerBar = input.int(10, "Price Levels Per Bar", minval=5, maxval=20, group="Order Flow Detection")
+barsToShow = input.int(6, "Bars to Show in History", minval=3, maxval=10, group="Order Flow Detection")
+
+// Key Level Settings
+maxKeyLevels = input.int(8, "Max Key Ranges to Track", minval=3, maxval=15, group="Key Levels")
+rangeMergeTicks = input.float(5.0, "Range Merge Distance (Ticks)", minval=2.0, step=0.5, group="Key Levels")
+
+// Tiering thresholds
+extremeRatio = input.float(8.0, "EXTREME Tier Threshold", minval=6.0, step=0.5, group="Tiering")
+strongRatio = input.float(5.0, "STRONG Tier Threshold", minval=4.0, step=0.5, group="Tiering")
+
+// Display Settings
+showBoxes = input.bool(true, "Show Imbalance Boxes", group="Display")
+showTradeLines = input.bool(true, "Show Trade Lines", group="Display")
+
+// Trade Settings
+minRR = input.float(3.0, "Minimum Risk:Reward Ratio", minval=2.0, step=0.5, group="Trade Logic")
+rejectionBuffer = input.float(5.0, "Stop Loss Buffer (Ticks)", minval=1.0, step=0.5, group="Trade Logic")
+profitConfirmBars = input.int(2, "Bars to Confirm Profit", minval=1, maxval=5, group="Trade Logic")
+
+// ----------------------------------------------------------------------------
+// Trade Filter Settings
+//
+// These inputs allow users to filter trade setups based on the prevailing
+// trend and the amount of opposing volume within a key imbalance.  The trend
+// filter compares price to a simple moving average to determine whether the
+// market is trending up or down.  The opposing volume filter rejects levels
+// where too much volume comes from the opposite side of the imbalance.
+// "Extreme" tiers can override the filters.
+trendFilterEnabled = input.bool(true, "Use trend filter?", group="Trade Filter")
+trendPeriod       = input.int(50, "Trend MA period", minval=10, maxval=200, group="Trade Filter")
+maxOpposingPct    = input.float(0.10, "Max opposing volume %", minval=0.01, maxval=0.5, step=0.01, group="Trade Filter")
+
+// Colors
+col_buy = input.color(#00ff41, "Buy Color", group="Colors")
+col_sell = input.color(#b968ff, "Sell Color", group="Colors")
+col_stop = input.color(#ff0000, "Stop Loss Color", group="Colors")
+col_target = input.color(#ffeb3b, "Take Profit Color", group="Colors")
+
+// ============================================================================
+// ORDER FLOW ENGINE
+// ============================================================================
+
+atr_value = ta.atr(14)
+bucket_size = atr_value / priceLevelsPerBar
+
+float barBuyVol = close > open ? volume * 0.7 : volume * 0.3
+float barSellVol = close > open ? volume * 0.3 : volume * 0.7
+float barDelta = barBuyVol - barSellVol
+
+// ---------------------------------------------------------------------------
+// Trend calculation for trade filtering
+// Compute a simple moving average of the closing price over the user‑specified
+// period and derive a directional string.  When the close is above the
+// moving average we consider the trend to be up, otherwise down.  These
+// values are used later to determine whether a key level aligns with the
+// prevailing market direction.
+float trendMA = ta.sma(close, trendPeriod)
+string trendDir = close > trendMA ? "up" : "down"
+
+calc_bar_levels(int lookback_offset) =>
+    if bar_index < lookback_offset
+        [array.new<float>(), array.new<float>(), array.new<float>()]
+    else
+        float h = high[lookback_offset]
+        float l = low[lookback_offset]
+        float c = close[lookback_offset]
+        float o = open[lookback_offset]
+        float v = volume[lookback_offset]
+        
+        if na(h) or na(l) or na(c) or na(o) or na(v)
+            [array.new<float>(), array.new<float>(), array.new<float>()]
+        else
+            float bar_buy = c > o ? v * 0.7 : v * 0.3
+            float bar_sell = c > o ? v * 0.3 : v * 0.7
+            
+            var array<float> prices = array.new<float>()
+            var array<float> buys = array.new<float>()
+            var array<float> sells = array.new<float>()
+            
+            array.clear(prices)
+            array.clear(buys)
+            array.clear(sells)
+            
+            float bar_range = h - l
+            
+            if bar_range <= 0 or na(bar_range)
+                [array.new<float>(), array.new<float>(), array.new<float>()]
+            else
+                int levels = math.max(1, math.floor(bar_range / bucket_size))
+                levels := math.min(levels, priceLevelsPerBar)
+                
+                float level_height = bar_range / levels
+                
+                for i = 0 to levels - 1
+                    float lvl_bottom = l + (i * level_height)
+                    float lvl_top = l + ((i + 1) * level_height)
+                    float lvl_mid = (lvl_bottom + lvl_top) / 2
+                    
+                    float position_pct = (lvl_mid - l) / bar_range
+                    float buy_weight = c > o ? position_pct : (1 - position_pct)
+                    float sell_weight = 1 - buy_weight
+                    
+                    float level_buy = (bar_buy / levels) * (0.5 + buy_weight * 0.5)
+                    float level_sell = (bar_sell / levels) * (0.5 + sell_weight * 0.5)
+                    
+                    array.push(prices, lvl_mid)
+                    array.push(buys, level_buy)
+                    array.push(sells, level_sell)
+                
+                [prices, buys, sells]
+
+// ============================================================================
+// KEY LEVEL MODEL
+// ============================================================================
+
+// Status states with ENTRY
+var string STATE_ACTIVE = "ACTIVE"
+var string STATE_ENTRY = "ENTRY"        // NEW: Trade setup ready
+var string STATE_TESTING = "TESTING"    // Trade is live
+var string STATE_PROFIT = "PROFIT"
+var string STATE_HELD = "HELD"
+var string STATE_REJECTED = "REJECTED"
+
+// New state representing a losing trade.  When a trade is entered and the
+// stop loss is confirmed, the level transitions to LOSS instead of REJECTED.
+var string STATE_LOSS = "LOSS"
+
+// Tier labels
+var string TIER_EXTREME = "⭐⭐⭐"
+var string TIER_STRONG = "⭐⭐"
+var string TIER_MODERATE = "⭐"
+
+// Persistent arrays
+var array<float> kl_range_top = array.new<float>()
+var array<float> kl_range_bottom = array.new<float>()
+var array<float> kl_poc = array.new<float>()
+var array<string> kl_side = array.new<string>()
+var array<float> kl_strength = array.new<float>()
+var array<float> kl_peak_ratio = array.new<float>()
+var array<float> kl_avg_ratio = array.new<float>()
+var array<float> kl_poc_volume = array.new<float>()
+var array<string> kl_tier = array.new<string>()
+var array<int> kl_origin_bar = array.new<int>()
+var array<string> kl_state = array.new<string>()
+var array<int> kl_test_count = array.new<int>()
+var array<box> kl_box = array.new<box>()
+var array<int> kl_last_test_bar = array.new<int>()
+
+// Trade visualization arrays
+var array<float> kl_entry_price = array.new<float>()
+var array<float> kl_stop_price = array.new<float>()
+var array<float> kl_target_price = array.new<float>()
+var array<float> kl_rr_ratio = array.new<float>()
+var array<line> kl_entry_line = array.new<line>()
+var array<line> kl_stop_line = array.new<line>()
+var array<line> kl_target_line = array.new<line>()
+var array<label> kl_trade_label = array.new<label>()
+var array<int> kl_reject_count = array.new<int>()
+
+// Session management
+var int last_session_day = 0
+int current_day = dayofmonth(time)
+if current_day != last_session_day
+    if array.size(kl_box) > 0
+        for i = 0 to array.size(kl_box) - 1
+            box.delete(array.get(kl_box, i))
+            if not na(array.get(kl_entry_line, i))
+                line.delete(array.get(kl_entry_line, i))
+            if not na(array.get(kl_stop_line, i))
+                line.delete(array.get(kl_stop_line, i))
+            if not na(array.get(kl_target_line, i))
+                line.delete(array.get(kl_target_line, i))
+            if not na(array.get(kl_trade_label, i))
+                label.delete(array.get(kl_trade_label, i))
+    array.clear(kl_range_top)
+    array.clear(kl_range_bottom)
+    array.clear(kl_poc)
+    array.clear(kl_side)
+    array.clear(kl_strength)
+    array.clear(kl_peak_ratio)
+    array.clear(kl_avg_ratio)
+    array.clear(kl_poc_volume)
+    array.clear(kl_tier)
+    array.clear(kl_origin_bar)
+    array.clear(kl_state)
+    array.clear(kl_test_count)
+    array.clear(kl_box)
+    array.clear(kl_last_test_bar)
+    array.clear(kl_entry_price)
+    array.clear(kl_stop_price)
+    array.clear(kl_target_price)
+    array.clear(kl_rr_ratio)
+    array.clear(kl_entry_line)
+    array.clear(kl_stop_line)
+    array.clear(kl_target_line)
+    array.clear(kl_trade_label)
+    array.clear(kl_reject_count)
+    last_session_day := current_day
+
+get_tier(float peak_ratio) =>
+    if peak_ratio >= extremeRatio
+        TIER_EXTREME
+    else if peak_ratio >= strongRatio
+        TIER_STRONG
+    else
+        TIER_MODERATE
+
+get_tier_rank(string tier) =>
+    tier == TIER_EXTREME ? 3 : tier == TIER_STRONG ? 2 : 1
+
+// Function to find next opposing imbalance for take profit
+find_next_target(int current_idx, string current_side) =>
+    float current_poc = array.get(kl_poc, current_idx)
+    float target = na
+    float best_rr = 0.0
+    
+    if array.size(kl_poc) > 0
+        for i = 0 to array.size(kl_poc) - 1
+            if i != current_idx
+                string side = array.get(kl_side, i)
+                float poc = array.get(kl_poc, i)
+                string state = array.get(kl_state, i)
+                
+                // Only consider active/entry/testing levels (not rejected)
+                if state != STATE_REJECTED
+                    // Looking for opposing side
+                    if current_side == "buy" and side == "sell" and poc > current_poc
+                        float stop_buffer = rejectionBuffer * syminfo.mintick
+                        float stop = current_poc - stop_buffer
+                        float risk = current_poc - stop
+                        float reward = poc - current_poc
+                        float rr = reward / risk
+                        
+                        if rr >= minRR and (na(target) or rr > best_rr)
+                            target := poc
+                            best_rr := rr
+                    
+                    else if current_side == "sell" and side == "buy" and poc < current_poc
+                        float stop_buffer = rejectionBuffer * syminfo.mintick
+                        float stop = current_poc + stop_buffer
+                        float risk = stop - current_poc
+                        float reward = current_poc - poc
+                        float rr = reward / risk
+                        
+                        if rr >= minRR and (na(target) or rr > best_rr)
+                            target := poc
+                            best_rr := rr
+    
+    [target, best_rr]
+
+// ============================================================================
+// IMBALANCE DETECTION
+// ============================================================================
+
+if barstate.isconfirmed
+    [prices, buys, sells] = calc_bar_levels(0)
+    
+    var array<float> raw_prices = array.new<float>()
+    var array<float> raw_buy_vols = array.new<float>()
+    var array<float> raw_sell_vols = array.new<float>()
+    var array<float> raw_ratios = array.new<float>()
+    var array<string> raw_sides = array.new<string>()
+    
+    array.clear(raw_prices)
+    array.clear(raw_buy_vols)
+    array.clear(raw_sell_vols)
+    array.clear(raw_ratios)
+    array.clear(raw_sides)
+    
+    if array.size(prices) > 0
+        for i = 0 to array.size(prices) - 1
+            float price = array.get(prices, i)
+            float buy_vol = array.get(buys, i)
+            float sell_vol = array.get(sells, i)
+            float total_vol = buy_vol + sell_vol
+            
+            float ratio = buy_vol >= sell_vol ? buy_vol / math.max(sell_vol, 1) : sell_vol / math.max(buy_vol, 1)
+            
+            if ratio >= imbalanceRatio and total_vol >= minLevelVolume
+                array.push(raw_prices, price)
+                array.push(raw_buy_vols, buy_vol)
+                array.push(raw_sell_vols, sell_vol)
+                array.push(raw_ratios, ratio)
+                array.push(raw_sides, buy_vol > sell_vol ? "buy" : "sell")
+    
+    if array.size(raw_prices) > 0
+        float merge_distance = rangeMergeTicks * syminfo.mintick
+        
+        for i = 0 to array.size(raw_prices) - 1
+            float price = array.get(raw_prices, i)
+            float buy_vol = array.get(raw_buy_vols, i)
+            float sell_vol = array.get(raw_sell_vols, i)
+            float ratio = array.get(raw_ratios, i)
+            string side = array.get(raw_sides, i)
+            float delta = buy_vol - sell_vol
+            
+            bool merged = false
+            if array.size(kl_range_top) > 0
+                for j = 0 to array.size(kl_range_top) - 1
+                    if array.get(kl_side, j) == side
+                        float range_top = array.get(kl_range_top, j)
+                        float range_bottom = array.get(kl_range_bottom, j)
+                        
+                        if (price >= range_bottom - merge_distance) and (price <= range_top + merge_distance)
+                            float new_top = math.max(range_top, price + bucket_size / 2)
+                            float new_bottom = math.min(range_bottom, price - bucket_size / 2)
+                            
+                            array.set(kl_range_top, j, new_top)
+                            array.set(kl_range_bottom, j, new_bottom)
+                            
+                            float current_peak = array.get(kl_peak_ratio, j)
+                            if ratio > current_peak
+                                array.set(kl_peak_ratio, j, ratio)
+                                array.set(kl_poc, j, price)
+                                array.set(kl_poc_volume, j, buy_vol + sell_vol)
+                                array.set(kl_tier, j, get_tier(ratio))
+                            
+                            float current_avg = array.get(kl_avg_ratio, j)
+                            float new_avg = (current_avg + ratio) / 2
+                            array.set(kl_avg_ratio, j, new_avg)
+                            
+                            float total_delta = math.abs(delta)
+                            float peak_ratio = array.get(kl_peak_ratio, j)
+                            float new_strength = (total_delta * peak_ratio) / 100
+                            array.set(kl_strength, j, new_strength)
+                            
+                            array.set(kl_origin_bar, j, bar_index)
+                            merged := true
+                            break
+            
+            if not merged
+                float range_top = price + bucket_size
+                float range_bottom = price - bucket_size
+                float strength = (math.abs(delta) * ratio) / 100
+                string tier = get_tier(ratio)
+                
+                array.push(kl_range_top, range_top)
+                array.push(kl_range_bottom, range_bottom)
+                array.push(kl_poc, price)
+                array.push(kl_side, side)
+                array.push(kl_strength, strength)
+                array.push(kl_peak_ratio, ratio)
+                array.push(kl_avg_ratio, ratio)
+                array.push(kl_poc_volume, buy_vol + sell_vol)
+                array.push(kl_tier, tier)
+                array.push(kl_origin_bar, bar_index)
+                array.push(kl_state, STATE_ACTIVE)
+                array.push(kl_test_count, 0)
+                array.push(kl_last_test_bar, 0)
+                array.push(kl_entry_price, na)
+                array.push(kl_stop_price, na)
+                array.push(kl_target_price, na)
+                array.push(kl_rr_ratio, na)
+                // Initialize line/label IDs as na (uninitialized)
+                array.push(kl_entry_line, na)
+                array.push(kl_stop_line, na)
+                array.push(kl_target_line, na)
+                array.push(kl_trade_label, na)
+                array.push(kl_reject_count, 0)
+                
+                color box_color = side == "buy" ? color.new(col_buy, 70) : color.new(col_sell, 70)
+                box new_box = box.new(left=bar_index, top=range_top, right=bar_index + 1, bottom=range_bottom, border_color=box_color, bgcolor=box_color, border_width=1)
+                array.push(kl_box, new_box)
+    
+    // Sort by tier then strength
+    if array.size(kl_strength) > 1
+        int n = array.size(kl_strength)
+        for i = 0 to n - 2
+            for j = 0 to n - 2 - i
+                string tier_j = array.get(kl_tier, j)
+                string tier_j1 = array.get(kl_tier, j + 1)
+                int rank_j = get_tier_rank(tier_j)
+                int rank_j1 = get_tier_rank(tier_j1)
+                
+                bool should_swap = false
+                if rank_j < rank_j1
+                    should_swap := true
+                else if rank_j == rank_j1 and array.get(kl_strength, j) < array.get(kl_strength, j + 1)
+                    should_swap := true
+                
+                if should_swap
+                    // Swap all arrays (keeping it compact)
+                    float tmp_f = array.get(kl_range_top, j)
+                    array.set(kl_range_top, j, array.get(kl_range_top, j + 1))
+                    array.set(kl_range_top, j + 1, tmp_f)
+                    
+                    tmp_f := array.get(kl_range_bottom, j)
+                    array.set(kl_range_bottom, j, array.get(kl_range_bottom, j + 1))
+                    array.set(kl_range_bottom, j + 1, tmp_f)
+                    
+                    tmp_f := array.get(kl_poc, j)
+                    array.set(kl_poc, j, array.get(kl_poc, j + 1))
+                    array.set(kl_poc, j + 1, tmp_f)
+                    
+                    string tmp_s = array.get(kl_side, j)
+                    array.set(kl_side, j, array.get(kl_side, j + 1))
+                    array.set(kl_side, j + 1, tmp_s)
+                    
+                    tmp_f := array.get(kl_strength, j)
+                    array.set(kl_strength, j, array.get(kl_strength, j + 1))
+                    array.set(kl_strength, j + 1, tmp_f)
+                    
+                    tmp_f := array.get(kl_peak_ratio, j)
+                    array.set(kl_peak_ratio, j, array.get(kl_peak_ratio, j + 1))
+                    array.set(kl_peak_ratio, j + 1, tmp_f)
+                    
+                    tmp_f := array.get(kl_avg_ratio, j)
+                    array.set(kl_avg_ratio, j, array.get(kl_avg_ratio, j + 1))
+                    array.set(kl_avg_ratio, j + 1, tmp_f)
+                    
+                    tmp_f := array.get(kl_poc_volume, j)
+                    array.set(kl_poc_volume, j, array.get(kl_poc_volume, j + 1))
+                    array.set(kl_poc_volume, j + 1, tmp_f)
+                    
+                    tmp_s := array.get(kl_tier, j)
+                    array.set(kl_tier, j, array.get(kl_tier, j + 1))
+                    array.set(kl_tier, j + 1, tmp_s)
+                    
+                    int tmp_i = array.get(kl_origin_bar, j)
+                    array.set(kl_origin_bar, j, array.get(kl_origin_bar, j + 1))
+                    array.set(kl_origin_bar, j + 1, tmp_i)
+                    
+                    tmp_s := array.get(kl_state, j)
+                    array.set(kl_state, j, array.get(kl_state, j + 1))
+                    array.set(kl_state, j + 1, tmp_s)
+                    
+                    tmp_i := array.get(kl_test_count, j)
+                    array.set(kl_test_count, j, array.get(kl_test_count, j + 1))
+                    array.set(kl_test_count, j + 1, tmp_i)
+                    
+                    tmp_i := array.get(kl_last_test_bar, j)
+                    array.set(kl_last_test_bar, j, array.get(kl_last_test_bar, j + 1))
+                    array.set(kl_last_test_bar, j + 1, tmp_i)
+                    
+                    box tmp_box = array.get(kl_box, j)
+                    array.set(kl_box, j, array.get(kl_box, j + 1))
+                    array.set(kl_box, j + 1, tmp_box)
+                    
+                    tmp_f := array.get(kl_entry_price, j)
+                    array.set(kl_entry_price, j, array.get(kl_entry_price, j + 1))
+                    array.set(kl_entry_price, j + 1, tmp_f)
+                    
+                    tmp_f := array.get(kl_stop_price, j)
+                    array.set(kl_stop_price, j, array.get(kl_stop_price, j + 1))
+                    array.set(kl_stop_price, j + 1, tmp_f)
+                    
+                    tmp_f := array.get(kl_target_price, j)
+                    array.set(kl_target_price, j, array.get(kl_target_price, j + 1))
+                    array.set(kl_target_price, j + 1, tmp_f)
+                    
+                    tmp_f := array.get(kl_rr_ratio, j)
+                    array.set(kl_rr_ratio, j, array.get(kl_rr_ratio, j + 1))
+                    array.set(kl_rr_ratio, j + 1, tmp_f)
+                    
+                    line tmp_line = array.get(kl_entry_line, j)
+                    array.set(kl_entry_line, j, array.get(kl_entry_line, j + 1))
+                    array.set(kl_entry_line, j + 1, tmp_line)
+                    
+                    tmp_line := array.get(kl_stop_line, j)
+                    array.set(kl_stop_line, j, array.get(kl_stop_line, j + 1))
+                    array.set(kl_stop_line, j + 1, tmp_line)
+                    
+                    tmp_line := array.get(kl_target_line, j)
+                    array.set(kl_target_line, j, array.get(kl_target_line, j + 1))
+                    array.set(kl_target_line, j + 1, tmp_line)
+                    
+                    label tmp_label = array.get(kl_trade_label, j)
+                    array.set(kl_trade_label, j, array.get(kl_trade_label, j + 1))
+                    array.set(kl_trade_label, j + 1, tmp_label)
+                    
+                    tmp_i := array.get(kl_reject_count, j)
+                    array.set(kl_reject_count, j, array.get(kl_reject_count, j + 1))
+                    array.set(kl_reject_count, j + 1, tmp_i)
+        
+        while array.size(kl_strength) > maxKeyLevels
+            if not na(array.get(kl_entry_line, array.size(kl_entry_line) - 1))
+                line.delete(array.get(kl_entry_line, array.size(kl_entry_line) - 1))
+            if not na(array.get(kl_stop_line, array.size(kl_stop_line) - 1))
+                line.delete(array.get(kl_stop_line, array.size(kl_stop_line) - 1))
+            if not na(array.get(kl_target_line, array.size(kl_target_line) - 1))
+                line.delete(array.get(kl_target_line, array.size(kl_target_line) - 1))
+            if not na(array.get(kl_trade_label, array.size(kl_trade_label) - 1))
+                label.delete(array.get(kl_trade_label, array.size(kl_trade_label) - 1))
+            box.delete(array.get(kl_box, array.size(kl_box) - 1))
+            
+            array.pop(kl_range_top)
+            array.pop(kl_range_bottom)
+            array.pop(kl_poc)
+            array.pop(kl_side)
+            array.pop(kl_strength)
+            array.pop(kl_peak_ratio)
+            array.pop(kl_avg_ratio)
+            array.pop(kl_poc_volume)
+            array.pop(kl_tier)
+            array.pop(kl_origin_bar)
+            array.pop(kl_state)
+            array.pop(kl_test_count)
+            array.pop(kl_last_test_bar)
+            array.pop(kl_box)
+            array.pop(kl_entry_price)
+            array.pop(kl_stop_price)
+            array.pop(kl_target_price)
+            array.pop(kl_rr_ratio)
+            array.pop(kl_entry_line)
+            array.pop(kl_stop_line)
+            array.pop(kl_target_line)
+            array.pop(kl_trade_label)
+            array.pop(kl_reject_count)
+
+// ============================================================================
+// LIFECYCLE UPDATE WITH ENTRY STATUS AND TRADE SETUP
+// ============================================================================
+
+if array.size(kl_state) > 0
+    for i = 0 to array.size(kl_state) - 1
+        if i < array.size(kl_state)
+            string current_state = array.get(kl_state, i)
+            string side = array.get(kl_side, i)
+            float range_top = array.get(kl_range_top, i)
+            float range_bottom = array.get(kl_range_bottom, i)
+            float poc = array.get(kl_poc, i)
+            int test_count = array.get(kl_test_count, i)
+            int last_test = array.get(kl_last_test_bar, i)
+            int reject_count = array.get(kl_reject_count, i)
+            
+            float reject_buffer = rejectionBuffer * syminfo.mintick
+            
+            // ACTIVE → ENTRY (find valid trade setup)
+            if current_state == STATE_ACTIVE
+                bool touching = (low <= range_top) and (high >= range_bottom)
+                if touching
+                    // Evaluate trade filters
+                    // Compute the imbalance ratio and total volume for this level
+                    float ratio_i = array.get(kl_peak_ratio, i)
+                    float totalVol = array.get(kl_poc_volume, i)
+                    // Estimate opposing volume: for buy levels ratio = buy/sell, so sellVol ≈ totalVol/(1+ratio).
+                    // For sell levels ratio = sell/buy, so buyVol ≈ totalVol/(1+ratio).
+                    float opposingVol = totalVol / (1 + ratio_i)
+                    bool noOpposition = opposingVol <= totalVol * maxOpposingPct
+                    bool trendAlign = not trendFilterEnabled or ((side == "buy" and trendDir == "up") or (side == "sell" and trendDir == "down"))
+                    bool extremeLevel = ratio_i >= extremeRatio
+                    // A level passes the filter if it aligns with the prevailing trend or
+                    // is classified as extreme.  The opposing‑volume filter is not
+                    // enforced here to encourage more setups.  Users can tighten this
+                    // behaviour by adjusting the inputs in the Trade Filter section.
+                    bool passFilter = trendAlign or extremeLevel
+
+                    // Find target and validate risk:reward.  Take profits are always based on
+                    // prior opposing key imbalance levels.  Trades are only considered
+                    // when we have a valid target with sufficient RR.  No fallback to
+                    // fixed multiples is used.
+                    [target, rr] = find_next_target(i, side)
+                    if passFilter
+                        float entry = poc
+                        float stop = side == "buy" ? poc - reject_buffer : poc + reject_buffer
+                        // Only open a trade if the opposing level exists and meets the minimum RR
+                        if not na(target) and rr >= minRR
+                            array.set(kl_entry_price, i, entry)
+                            array.set(kl_stop_price, i, stop)
+                            array.set(kl_target_price, i, target)
+                            array.set(kl_rr_ratio, i, rr)
+                            array.set(kl_state, i, STATE_ENTRY)
+                            array.set(kl_last_test_bar, i, bar_index)
+                        else
+                            // No valid opposing level or RR too low – remain ACTIVE and record touch
+                            array.set(kl_last_test_bar, i, bar_index)
+                    else
+                        // Filters not satisfied – remain ACTIVE and record touch
+                        array.set(kl_last_test_bar, i, bar_index)
+            
+            // ENTRY → TESTING (trade is live)
+            else if current_state == STATE_ENTRY
+                // Only transition when price hits the entry price
+                float entry_price = array.get(kl_entry_price, i)
+                bool triggered = false
+                if side == "buy"
+                    triggered := low <= entry_price
+                else
+                    triggered := high >= entry_price
+                if triggered
+                    array.set(kl_state, i, STATE_TESTING)
+                    // Record bar index when trade goes live
+                    array.set(kl_last_test_bar, i, bar_index)
+            
+            // TESTING → PROFIT or LOSS
+            else if current_state == STATE_TESTING
+                float stop = array.get(kl_stop_price, i)
+                float target = array.get(kl_target_price, i)
+                
+                if side == "buy"
+                    // Check for profit (target hit)
+                    if not na(target) and high >= target
+                        array.set(kl_state, i, STATE_PROFIT)
+                        array.set(kl_test_count, i, test_count + 1)
+                        array.set(kl_reject_count, i, 0)
+                    // Check for stop (with confirmation)
+                    else if not na(stop) and close < stop
+                        reject_count := reject_count + 1
+                        array.set(kl_reject_count, i, reject_count)
+                        if reject_count >= profitConfirmBars
+                            // Stop hit after entry – mark as LOSS
+                            array.set(kl_state, i, STATE_LOSS)
+                    else
+                        array.set(kl_reject_count, i, 0)
+                    
+                else  // sell
+                    // Check for profit (target hit)
+                    if not na(target) and low <= target
+                        array.set(kl_state, i, STATE_PROFIT)
+                        array.set(kl_test_count, i, test_count + 1)
+                        array.set(kl_reject_count, i, 0)
+                    // Check for stop (with confirmation)
+                    else if not na(stop) and close > stop
+                        reject_count := reject_count + 1
+                        array.set(kl_reject_count, i, reject_count)
+                        if reject_count >= profitConfirmBars
+                            // Stop hit after entry – mark as LOSS
+                            array.set(kl_state, i, STATE_LOSS)
+                    else
+                        array.set(kl_reject_count, i, 0)
+            
+            // PROFIT → HELD
+            else if current_state == STATE_PROFIT
+                if test_count >= 2
+                    array.set(kl_state, i, STATE_HELD)
+                
+                // Check for retouch
+                bool touching_again = (low <= range_top) and (high >= range_bottom)
+                if touching_again and (bar_index > last_test + 3)
+                    [target, rr] = find_next_target(i, side)
+                    if not na(target) and rr >= minRR
+                        float entry = poc
+                        float stop = side == "buy" ? poc - reject_buffer : poc + reject_buffer
+                        array.set(kl_entry_price, i, entry)
+                        array.set(kl_stop_price, i, stop)
+                        array.set(kl_target_price, i, target)
+                        array.set(kl_rr_ratio, i, rr)
+                        array.set(kl_state, i, STATE_ENTRY)
+                        array.set(kl_last_test_bar, i, bar_index)
+            
+            // HELD
+            else if current_state == STATE_HELD
+                bool touching_again = (low <= range_top) and (high >= range_bottom)
+                if touching_again and (bar_index > last_test + 3)
+                    [target, rr] = find_next_target(i, side)
+                    if not na(target) and rr >= minRR
+                        float entry = poc
+                        float stop = side == "buy" ? poc - reject_buffer : poc + reject_buffer
+                        array.set(kl_entry_price, i, entry)
+                        array.set(kl_stop_price, i, stop)
+                        array.set(kl_target_price, i, target)
+                        array.set(kl_rr_ratio, i, rr)
+                        array.set(kl_state, i, STATE_ENTRY)
+                        array.set(kl_last_test_bar, i, bar_index)
+
+// ============================================================================
+// RENDERING - BOXES AND TRADE LINES
+// ============================================================================
+
+if array.size(kl_box) > 0
+    for i = 0 to array.size(kl_box) - 1
+        if i < array.size(kl_box) and i < array.size(kl_state)
+            box current_box = array.get(kl_box, i)
+            string state = array.get(kl_state, i)
+            string side = array.get(kl_side, i)
+            string tier = array.get(kl_tier, i)
+            
+            color base_color = side == "buy" ? col_buy : col_sell
+            
+            // Box rendering
+            if showBoxes
+                int base_opacity = 70
+                if state == STATE_ACTIVE
+                    base_opacity := 70
+                else if state == STATE_ENTRY
+                    base_opacity := 40  // Brighter - trade setup ready!
+                else if state == STATE_TESTING
+                    base_opacity := 50
+                else if state == STATE_PROFIT
+                    base_opacity := 30
+                else if state == STATE_HELD
+                    base_opacity := 20
+                else
+                    base_opacity := 90
+                
+                int tier_boost = tier == TIER_EXTREME ? 10 : tier == TIER_STRONG ? 5 : 0
+                int final_opacity = math.max(10, base_opacity - tier_boost)
+                
+                box.set_right(current_box, bar_index + 1)
+                box.set_border_color(current_box, color.new(base_color, final_opacity))
+                box.set_bgcolor(current_box, color.new(base_color, final_opacity))
+            
+            // Trade line rendering
+            if showTradeLines
+                float entry = array.get(kl_entry_price, i)
+                float stop = array.get(kl_stop_price, i)
+                float target = array.get(kl_target_price, i)
+                float rr = array.get(kl_rr_ratio, i)
+                
+                // Draw/update lines for ENTRY or TESTING states
+                if (state == STATE_ENTRY or state == STATE_TESTING) and not na(entry) and not na(stop) and not na(target)
+                    // Entry line
+                    line entry_line = array.get(kl_entry_line, i)
+                    if na(entry_line)
+                        entry_line := line.new(bar_index, entry, bar_index + 1, entry, color = base_color, width = 2, style = line.style_solid)
+                        array.set(kl_entry_line, i, entry_line)
+                    else
+                        line.set_x2(entry_line, bar_index + 1)
+
+                    // Stop line
+                    line stop_line = array.get(kl_stop_line, i)
+                    if na(stop_line)
+                        stop_line := line.new(bar_index, stop, bar_index + 1, stop, color = col_stop, width = 2, style = line.style_dashed)
+                        array.set(kl_stop_line, i, stop_line)
+                    else
+                        line.set_x2(stop_line, bar_index + 1)
+
+                    // Target line
+                    line target_line = array.get(kl_target_line, i)
+                    if na(target_line)
+                        target_line := line.new(bar_index, target, bar_index + 1, target, color = col_target, width = 2, style = line.style_dotted)
+                        array.set(kl_target_line, i, target_line)
+                    else
+                        line.set_x2(target_line, bar_index + 1)
+
+                    // Label with RR
+                    label trade_label = array.get(kl_trade_label, i)
+                    if na(trade_label)
+                        string label_text = str.tostring(rr, "#.#") + ":1"
+                        trade_label := label.new(bar_index, entry, label_text, color = color.new(base_color, 80), textcolor = color.white, style = label.style_label_left, size = size.small)
+                        array.set(kl_trade_label, i, trade_label)
+                    else
+                        label.set_x(trade_label, bar_index)
+                
+                // Add outcome marker for PROFIT
+                else if state == STATE_PROFIT and not na(entry)
+                    label trade_label = array.get(kl_trade_label, i)
+                    if na(trade_label)
+                        trade_label := label.new(bar_index, entry, "✓", color = color.new(color.lime, 70), textcolor = color.white, style = label.style_label_up, size = size.normal)
+                        array.set(kl_trade_label, i, trade_label)
+                
+                // Add outcome marker for LOSS
+                else if state == STATE_LOSS and not na(entry)
+                    label trade_label = array.get(kl_trade_label, i)
+                    if na(trade_label)
+                        trade_label := label.new(bar_index, entry, "✗", color = color.new(color.red, 70), textcolor = color.white, style = label.style_label_down, size = size.normal)
+                        array.set(kl_trade_label, i, trade_label)
+                
+                // Add outcome marker for REJECTED (never triggered)
+                else if state == STATE_REJECTED and not na(entry)
+                    label trade_label = array.get(kl_trade_label, i)
+                    if na(trade_label)
+                        trade_label := label.new(bar_index, entry, "R", color = color.new(color.gray, 70), textcolor = color.white, style = label.style_label_down, size = size.normal)
+                        array.set(kl_trade_label, i, trade_label)
+
+// ============================================================================
+// TABLES (UNCHANGED)
+// ============================================================================
+
+var table tbl_key = table.new(position=position.middle_left, columns=9, rows=12, bgcolor=color.new(color.black, 85), border_width=1)
+
+if barstate.islast
+    table.cell(tbl_key, 0, 0, "KEY IMBALANCE LEVELS", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
+    table.merge_cells(tbl_key, 0, 0, 8, 0)
+    
+    table.cell(tbl_key, 0, 1, "Range", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 1, 1, "POC", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 2, 1, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 3, 1, "Peak", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 4, 1, "Tier", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 5, 1, "Score", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 6, 1, "Status", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 7, 1, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 8, 1, "Tests", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    
+    int display_count = math.min(array.size(kl_poc), 10)
+    for row = 0 to 9
+        int data_row = row + 2
+        if row < display_count
+            float range_top = array.get(kl_range_top, row)
+            float range_bottom = array.get(kl_range_bottom, row)
+            float poc = array.get(kl_poc, row)
+            string side = array.get(kl_side, row)
+            float peak_ratio = array.get(kl_peak_ratio, row)
+            string tier = array.get(kl_tier, row)
+            float strength = array.get(kl_strength, row)
+            string state = array.get(kl_state, row)
+            int tests = array.get(kl_test_count, row)
+            float rr = array.get(kl_rr_ratio, row)
+            
+            color side_color = side == "buy" ? col_buy : col_sell
+            color tier_bg = tier == TIER_EXTREME ? color.new(color.orange, 92) : tier == TIER_STRONG ? color.new(color.blue, 92) : color.new(color.black, 90)
+            
+            color state_color = color.white
+            color row_bg = tier_bg
+            
+            if state == STATE_HELD
+                state_color := color.yellow
+                row_bg := color.new(color.yellow, 90)
+            else if state == STATE_PROFIT
+                state_color := color.lime
+                row_bg := color.new(color.lime, 90)
+            else if state == STATE_ENTRY
+                state_color := color.orange
+                row_bg := color.new(color.orange, 90)
+            else if state == STATE_TESTING
+                state_color := color.aqua
+            // Losing trades are highlighted in red
+            else if state == STATE_LOSS
+                state_color := color.red
+                row_bg := color.new(color.red, 90)
+            else if state == STATE_ACTIVE
+                state_color := color.white
+            // Rejected trades are grey
+            else if state == STATE_REJECTED
+                state_color := color.gray
+                row_bg := color.new(color.gray, 92)
+            else
+                state_color := color.gray
+            
+            string range_str = str.tostring(range_bottom, format.mintick) + "-" + str.tostring(range_top, format.mintick)
+            string rr_str = na(rr) ? "-" : str.tostring(rr, "#.#")
+            
+            table.cell(tbl_key, 0, data_row, range_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 1, data_row, str.tostring(poc, format.mintick), text_color=side_color, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 2, data_row, side == "buy" ? "🟢 B" : "🔴 S", text_color=side_color, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 3, data_row, str.tostring(peak_ratio, "#.#") + ":1", text_color=side_color, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 4, data_row, tier, text_color=color.yellow, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 5, data_row, str.tostring(math.round(strength)), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+            // Map internal state to a user‑friendly status for display.  ACTIVE
+            // becomes blank (waiting), ENTRY becomes Ready, TESTING becomes
+            // Live, PROFIT → Profit, HELD → Held, LOSS → Loss, REJECTED → Rejected.
+            string display_state = ""
+            if state == STATE_ENTRY
+                display_state := "Ready"
+            else if state == STATE_TESTING
+                display_state := "Live"
+            else if state == STATE_PROFIT
+                display_state := "Profit"
+            else if state == STATE_HELD
+                display_state := "Held"
+            else if state == STATE_LOSS
+                display_state := "Loss"
+            else if state == STATE_REJECTED
+                display_state := "Rejected"
+            else
+                display_state := ""
+            table.cell(tbl_key, 6, data_row, display_state, text_color=state_color, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 7, data_row, rr_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 8, data_row, str.tostring(tests), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+        else
+            color empty_bg = color.new(color.gray, 95)
+            for col = 0 to 8
+                table.cell(tbl_key, col, data_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+
+var table tbl_flow = table.new(position=position.top_right, columns=12, rows=22, bgcolor=color.new(color.black, 85), border_width=1)
+
+// Table listing possible trades (levels currently in ENTRY state).  Shows
+// side, entry, stop, target, risk:reward and tier.  Positioned at the
+// bottom left of the screen.
+var table tbl_possible = table.new(position=position.bottom_left, columns=6, rows=10, bgcolor=color.new(color.black, 85), border_width=1)
+
+// Table listing open trades (levels currently in TESTING state).  Shows
+// side, entry, stop, target, risk:reward and current status (e.g. progress
+// in terms of R).  Positioned at the bottom right of the screen.
+var table tbl_open = table.new(position=position.bottom_right, columns=6, rows=10, bgcolor=color.new(color.black, 85), border_width=1)
+
+// Table listing closed trades (levels that have completed either Profit or Loss).  Shows side,
+// entry, stop, target, risk:reward, the number of ticks gained or lost, and the result.
+// Positioned at the bottom centre of the screen so that all three trade tables are visible.
+var table tbl_closed = table.new(position=position.bottom_center, columns=7, rows=10, bgcolor=color.new(color.black, 85), border_width=1)
+
+if barstate.islast
+    table.cell(tbl_flow, 0, 0, "ORDER FLOW HISTORY", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
+    table.merge_cells(tbl_flow, 0, 0, 11, 0)
+    
+    int safe_bars = math.min(barsToShow, bar_index + 1)
+    int current_row = 1
+    
+    for bar_idx = 0 to 2
+        if bar_idx < safe_bars
+            int col_start = bar_idx * 4
+            int bar_offset = safe_bars - 1 - bar_idx
+            string bar_label = "-" + str.tostring(bar_offset)
+            table.cell(tbl_flow, col_start, current_row, bar_label, text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.gray, 70))
+            table.merge_cells(tbl_flow, col_start, current_row, col_start + 3, current_row)
+    current_row += 1
+    
+    for bar_idx = 0 to 2
+        if bar_idx < safe_bars
+            int col_start = bar_idx * 4
+            table.cell(tbl_flow, col_start + 0, current_row, "Price", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+            table.cell(tbl_flow, col_start + 1, current_row, "B:S", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+            table.cell(tbl_flow, col_start + 2, current_row, "Δ", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+            table.cell(tbl_flow, col_start + 3, current_row, "🔥", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+    current_row += 1
+    
+    for row = 0 to 7
+        for bar_idx = 0 to 2
+            if bar_idx < safe_bars
+                int col_start = bar_idx * 4
+                int bar_offset = safe_bars - 1 - bar_idx
+                [prices, buys, sells] = calc_bar_levels(bar_offset)
+                int level_count = array.size(prices)
+                if level_count > 0 and row < level_count
+                    int idx = level_count - 1 - row
+                    float price = array.get(prices, idx)
+                    float buy_vol = array.get(buys, idx)
+                    float sell_vol = array.get(sells, idx)
+                    float delta = buy_vol - sell_vol
+                    float ratio = buy_vol >= sell_vol ? buy_vol / math.max(sell_vol, 1) : sell_vol / math.max(buy_vol, 1)
+                    bool is_imbalance = ratio >= imbalanceRatio
+                    color row_bg = is_imbalance ? (buy_vol > sell_vol ? color.new(col_buy, 85) : color.new(col_sell, 85)) : color.new(color.black, 92)
+                    table.cell(tbl_flow, col_start + 0, current_row, str.tostring(price, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                    table.cell(tbl_flow, col_start + 1, current_row, str.tostring(math.round(buy_vol)) + ":" + str.tostring(math.round(sell_vol)), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                    table.cell(tbl_flow, col_start + 2, current_row, str.tostring(math.round(delta), "+#;-#"), text_color=delta > 0 ? col_buy : col_sell, text_size=size.small, bgcolor=row_bg)
+                    table.cell(tbl_flow, col_start + 3, current_row, is_imbalance ? "🔥" : "", text_color=color.orange, text_size=size.small, bgcolor=row_bg)
+                else
+                    color empty_bg = color.new(color.gray, 95)
+                    table.cell(tbl_flow, col_start + 0, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+                    table.cell(tbl_flow, col_start + 1, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+                    table.cell(tbl_flow, col_start + 2, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+                    table.cell(tbl_flow, col_start + 3, current_row, "", bgcolor=empty_bg)
+        current_row += 1
+
+    // ---------------------------------------------------------------------
+    // Populate the Possible Trades and Open Trades tables
+    // These tables provide a concise overview of actionable setups (ENTRY)
+    // and live trades (TESTING).  The logic iterates over all tracked key
+    // levels and extracts relevant fields for display.
+    
+    // Populate Possible Trades table header
+    // Rename header to clarify that these are trade setups ready to be triggered
+    table.cell(tbl_possible, 0, 0, "SET TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
+    table.merge_cells(tbl_possible, 0, 0, 5, 0)
+    table.cell(tbl_possible, 0, 1, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_possible, 1, 1, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_possible, 2, 1, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_possible, 3, 1, "Target", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_possible, 4, 1, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_possible, 5, 1, "Tier", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    int p_row = 2
+    int max_p = 8
+    int total_levels = array.size(kl_state)
+    for idx = 0 to total_levels - 1
+        if p_row < max_p + 2
+            string st = array.get(kl_state, idx)
+            if st == STATE_ENTRY
+                string s_side = array.get(kl_side, idx)
+                float e_entry = array.get(kl_entry_price, idx)
+                float e_stop = array.get(kl_stop_price, idx)
+                float e_target = array.get(kl_target_price, idx)
+                float e_rr = array.get(kl_rr_ratio, idx)
+                string e_tier = array.get(kl_tier, idx)
+                string side_str = s_side == "buy" ? "Buy" : "Sell"
+                string rr_str = na(e_rr) ? "-" : str.tostring(e_rr, "#.#")
+                color row_bg = s_side == "buy" ? color.new(col_buy, 90) : color.new(col_sell, 90)
+                color side_color2 = s_side == "buy" ? col_buy : col_sell
+                table.cell(tbl_possible, 0, p_row, side_str, text_color=side_color2, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_possible, 1, p_row, str.tostring(e_entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_possible, 2, p_row, str.tostring(e_stop, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_possible, 3, p_row, str.tostring(e_target, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_possible, 4, p_row, rr_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_possible, 5, p_row, e_tier, text_color=color.yellow, text_size=size.small, bgcolor=row_bg)
+                p_row := p_row + 1
+    // Fill remaining rows with dashes
+    for r = p_row to max_p + 1
+        for c = 0 to 5
+            table.cell(tbl_possible, c, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
+    
+    // Populate Open Trades table header
+    table.cell(tbl_open, 0, 0, "OPEN TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
+    table.merge_cells(tbl_open, 0, 0, 5, 0)
+    table.cell(tbl_open, 0, 1, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_open, 1, 1, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_open, 2, 1, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_open, 3, 1, "Target", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_open, 4, 1, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_open, 5, 1, "Status", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    int o_row = 2
+    int max_o = 8
+    for idx = 0 to total_levels - 1
+        if o_row < max_o + 2
+            string st2 = array.get(kl_state, idx)
+            if st2 == STATE_TESTING
+                string s_side2 = array.get(kl_side, idx)
+                float e_entry2 = array.get(kl_entry_price, idx)
+                float e_stop2 = array.get(kl_stop_price, idx)
+                float e_target2 = array.get(kl_target_price, idx)
+                float e_rr2 = array.get(kl_rr_ratio, idx)
+                string side_str2 = s_side2 == "buy" ? "Buy" : "Sell"
+                string rr_str2 = na(e_rr2) ? "-" : str.tostring(e_rr2, "#.#")
+                color row_bg3 = s_side2 == "buy" ? color.new(col_buy, 90) : color.new(col_sell, 90)
+                color side_color3 = s_side2 == "buy" ? col_buy : col_sell
+                float current_price = close
+                string status_str = ""
+                if not na(e_entry2) and not na(e_stop2)
+                    float risk_val = math.abs(e_entry2 - e_stop2)
+                    if risk_val > 0
+                        if s_side2 == "buy"
+                            float progress = (current_price - e_entry2) / risk_val
+                            status_str := current_price >= e_target2 ? "Target" : (current_price <= e_stop2 ? "Stop" : str.tostring(progress, "#.#") + "R")
+                        else
+                            float progress = (e_entry2 - current_price) / risk_val
+                            status_str := current_price <= e_target2 ? "Target" : (current_price >= e_stop2 ? "Stop" : str.tostring(progress, "#.#") + "R")
+                    else
+                        status_str := "-"
+                else
+                    status_str := "-"
+                table.cell(tbl_open, 0, o_row, side_str2, text_color=side_color3, text_size=size.small, bgcolor=row_bg3)
+                table.cell(tbl_open, 1, o_row, str.tostring(e_entry2, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg3)
+                table.cell(tbl_open, 2, o_row, str.tostring(e_stop2, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg3)
+                table.cell(tbl_open, 3, o_row, str.tostring(e_target2, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg3)
+                table.cell(tbl_open, 4, o_row, rr_str2, text_color=color.white, text_size=size.small, bgcolor=row_bg3)
+                table.cell(tbl_open, 5, o_row, status_str, text_color=color.white, text_size=size.small, bgcolor=row_bg3)
+                o_row := o_row + 1
+    // Fill remaining rows with dashes
+    for r = o_row to max_o + 1
+        for c = 0 to 5
+            table.cell(tbl_open, c, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
+
+    // ---------------------------------------------------------------------
+    // Populate the Closed Trades table.  These entries reflect trades that
+    // have completed either at target (profit) or stop (loss).  For each
+    // closed trade we show the side, entry, stop, target, RR, realised ticks
+    // gained or lost and whether the outcome was a Profit or Loss.
+    table.cell(tbl_closed, 0, 0, "CLOSED TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
+    table.merge_cells(tbl_closed, 0, 0, 6, 0)
+    table.cell(tbl_closed, 0, 1, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_closed, 1, 1, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_closed, 2, 1, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_closed, 3, 1, "Target", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_closed, 4, 1, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_closed, 5, 1, "Ticks", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_closed, 6, 1, "Result", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    int c_row = 2
+    int max_c = 8
+    for idx = 0 to total_levels - 1
+        if c_row < max_c + 2
+            string st3 = array.get(kl_state, idx)
+            // Include both Profit and Loss outcomes as closed trades
+            if st3 == STATE_PROFIT or st3 == STATE_LOSS
+                string s_side3 = array.get(kl_side, idx)
+                float e_entry3 = array.get(kl_entry_price, idx)
+                float e_stop3 = array.get(kl_stop_price, idx)
+                float e_target3 = array.get(kl_target_price, idx)
+                float e_rr3 = array.get(kl_rr_ratio, idx)
+                string side_str3 = s_side3 == "buy" ? "Buy" : "Sell"
+                // Compute realised ticks based on result and trade direction
+                float ticks_val = na
+                if not na(e_entry3) and not na(e_stop3)
+                    if s_side3 == "buy"
+                        ticks_val := st3 == STATE_PROFIT ? (e_target3 - e_entry3) / syminfo.mintick : (e_stop3 - e_entry3) / syminfo.mintick
+                    else
+                        ticks_val := st3 == STATE_PROFIT ? (e_entry3 - e_target3) / syminfo.mintick : (e_entry3 - e_stop3) / syminfo.mintick
+                string ticks_str = na(ticks_val) ? "-" : str.tostring(math.round(ticks_val), "+#;-#")
+                string rr_str3 = na(e_rr3) ? "-" : str.tostring(e_rr3, "#.#")
+                color row_bg4 = s_side3 == "buy" ? color.new(col_buy, 90) : color.new(col_sell, 90)
+                color side_color4 = s_side3 == "buy" ? col_buy : col_sell
+                string result_str = st3 == STATE_PROFIT ? "Profit" : "Loss"
+                table.cell(tbl_closed, 0, c_row, side_str3, text_color=side_color4, text_size=size.small, bgcolor=row_bg4)
+                table.cell(tbl_closed, 1, c_row, str.tostring(e_entry3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+                table.cell(tbl_closed, 2, c_row, str.tostring(e_stop3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+                table.cell(tbl_closed, 3, c_row, str.tostring(e_target3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+                table.cell(tbl_closed, 4, c_row, rr_str3, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+                table.cell(tbl_closed, 5, c_row, ticks_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+                table.cell(tbl_closed, 6, c_row, result_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+                c_row := c_row + 1
+    // Fill remaining rows with dashes
+    for r = c_row to max_c + 1
+        for col = 0 to 6
+            table.cell(tbl_closed, col, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
+    
+    table.cell(tbl_flow, 0, current_row, "", bgcolor=color.new(color.gray, 80))
+    table.merge_cells(tbl_flow, 0, current_row, 11, current_row)
+    current_row += 1
+    
+    for bar_idx = 0 to 2
+        int actual_bar_idx = bar_idx + 3
+        if actual_bar_idx < safe_bars
+            int col_start = bar_idx * 4
+            int bar_offset = safe_bars - 1 - actual_bar_idx
+            string bar_label = bar_offset == 0 ? "NOW" : "-" + str.tostring(bar_offset)
+            table.cell(tbl_flow, col_start, current_row, bar_label, text_color=bar_offset == 0 ? color.lime : color.yellow, text_size=size.small, bgcolor=color.new(color.gray, 70))
+            table.merge_cells(tbl_flow, col_start, current_row, col_start + 3, current_row)
+    current_row += 1
+    
+    for bar_idx = 0 to 2
+        int actual_bar_idx = bar_idx + 3
+        if actual_bar_idx < safe_bars
+            int col_start = bar_idx * 4
+            table.cell(tbl_flow, col_start + 0, current_row, "Price", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+            table.cell(tbl_flow, col_start + 1, current_row, "B:S", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+            table.cell(tbl_flow, col_start + 2, current_row, "Δ", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+            table.cell(tbl_flow, col_start + 3, current_row, "🔥", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+    current_row += 1
+    
+    for row = 0 to 7
+        for bar_idx = 0 to 2
+            int actual_bar_idx = bar_idx + 3
+            if actual_bar_idx < safe_bars
+                int col_start = bar_idx * 4
+                int bar_offset = safe_bars - 1 - actual_bar_idx
+                [prices, buys, sells] = calc_bar_levels(bar_offset)
+                int level_count = array.size(prices)
+                if level_count > 0 and row < level_count
+                    int idx = level_count - 1 - row
+                    float price = array.get(prices, idx)
+                    float buy_vol = array.get(buys, idx)
+                    float sell_vol = array.get(sells, idx)
+                    float delta = buy_vol - sell_vol
+                    float ratio = buy_vol >= sell_vol ? buy_vol / math.max(sell_vol, 1) : sell_vol / math.max(buy_vol, 1)
+                    bool is_imbalance = ratio >= imbalanceRatio
+                    color row_bg = is_imbalance ? (buy_vol > sell_vol ? color.new(col_buy, 85) : color.new(col_sell, 85)) : color.new(color.black, 92)
+                    table.cell(tbl_flow, col_start + 0, current_row, str.tostring(price, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                    table.cell(tbl_flow, col_start + 1, current_row, str.tostring(math.round(buy_vol)) + ":" + str.tostring(math.round(sell_vol)), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                    table.cell(tbl_flow, col_start + 2, current_row, str.tostring(math.round(delta), "+#;-#"), text_color=delta > 0 ? col_buy : col_sell, text_size=size.small, bgcolor=row_bg)
+                    table.cell(tbl_flow, col_start + 3, current_row, is_imbalance ? "🔥" : "", text_color=color.orange, text_size=size.small, bgcolor=row_bg)
+                else
+                    color empty_bg = color.new(color.gray, 95)
+                    table.cell(tbl_flow, col_start + 0, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+                    table.cell(tbl_flow, col_start + 1, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+                    table.cell(tbl_flow, col_start + 2, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+                    table.cell(tbl_flow, col_start + 3, current_row, "", bgcolor=empty_bg)
+        current_row += 1
