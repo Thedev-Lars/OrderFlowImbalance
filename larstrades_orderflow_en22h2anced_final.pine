@@ -634,7 +634,7 @@ if array.size(kl_state) > 0
                     // extreme (which overrides both filters).  This keeps the opposing
                     // volume input meaningful while still allowing standout levels
                     // through.
-                    bool passFilter = (trendAlign and noOpposition) or extremeLevel
+                    bool passFilter = not trendFilterEnabled or (trendAlign and noOpposition) or extremeLevel
 
                     // Find target and validate risk:reward.  Take profits are always based on
                     // prior opposing key imbalance levels.  Trades are only considered
@@ -789,7 +789,11 @@ if array.size(trade_state) > 0
             float poc = array.get(kl_poc, i)
 
             if ts == TE_STATE_POSSIBLE
-                bool broke_zone = side == "buy" ? (low < range_bottom and high < poc) : (high > range_top and low > poc)
+                bool broke_zone = false
+                if not na(stop)
+                    broke_zone := side == "buy" ? (low <= stop) : (high >= stop)
+                else
+                    broke_zone := side == "buy" ? (low < range_bottom and high < poc) : (high > range_top and low > poc)
                 if broke_zone
                     array.set(trade_state, i, TE_STATE_REJECTED)
                     if i < array.size(kl_state)
