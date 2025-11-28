@@ -28,6 +28,7 @@ ob_lifespan = input.int(200, "Bars to Keep Unfilled Blocks", minval=10, maxval=5
 hist_lifespan = input.int(300, "Key Level Lifespan", minval=50, maxval=1000, group=grp2)
 max_hist_levels = input.int(20, "Max Stored Key Levels", minval=5, maxval=100, group=grp2)
 show_faded_levels = input.bool(false, "Show Filled/Expired Levels", group=grp2)
+inactive_cleanup = input.int(25, "Bars to Keep Inactive Blocks", minval=0, maxval=200, group=grp2, tooltip="How long to leave filled/expired boxes and trade labels on chart; 0 = delete immediately")
 
 grp2b = "Trade Cues"
 show_trades = input.bool(true, "Show Trade Markers", group=grp2b, tooltip="Plot entry/stop/targets after retest or fill")
@@ -458,17 +459,12 @@ if array.size(ob_boxes) > 0
                             entry_price = side == "buy" ? bot_price + (entry_offset_ticks * syminfo.mintick) : top_price - (entry_offset_ticks * syminfo.mintick)
                             fixed_stop_ticks = 6.0
                             stop_price = side == "buy" ? bot_price - (fixed_stop_ticks * syminfo.mintick) : top_price + (fixed_stop_ticks * syminfo.mintick)
-                            risk = math.max(math.abs(entry_price - stop_price), syminfo.mintick)
-
                             float tp1 = na
                             float tp2 = na
                             opp = nearest_opposing_price(side, entry_price)
                             if not na(opp)
                                 tp1 := opp
                                 tp2 := opp
-                            if na(tp1)
-                                tp1 := target_from_rr(side, entry_price, risk, tp_rr1)
-                                tp2 := target_from_rr(side, entry_price, risk, tp_rr2)
 
                             side_col = side == "buy" ? col_buy : col_sell
 
@@ -491,8 +487,9 @@ if array.size(ob_boxes) > 0
                             // Detect outcomes only after activation
                             if state == "active"
                                 hit_stop = (side == "buy" and low <= stop_price) or (side == "sell" and high >= stop_price)
-                                hit_tp2 = (side == "buy" and high >= tp2) or (side == "sell" and low <= tp2)
-                                hit_tp1 = (side == "buy" and high >= tp1) or (side == "sell" and low <= tp1)
+                                has_tp = not na(tp1)
+                                hit_tp2 = has_tp and ((side == "buy" and high >= tp2) or (side == "sell" and low <= tp2))
+                                hit_tp1 = has_tp and ((side == "buy" and high >= tp1) or (side == "sell" and low <= tp1))
                                 if hit_stop
                                     state := "stopped"
                                 else if hit_tp2
@@ -501,19 +498,21 @@ if array.size(ob_boxes) > 0
                                     state := "tp1"
                                 array.set(ob_trade_state, i, state)
 
-                            lbl_suffix = state == "active" ? "Entry" : (state == "stopped" ? "Stop ❌" : (state == "tp2" ? "TP2 🎯" : (state == "tp1" ? "TP1 🎯" : "Entry")))
+                            lbl_suffix = state == "active" ? "Entry" : (state == "stopped" ? "Stop ❌" : (state == "tp2" ? "TP2 🎯" : (state == "tp1" ? "TP1 🎯" : (na(tp1) ? "No TP" : "Entry"))))
                             state_col = state == "stopped" ? color.red : side_col
                             state_bg = state == "stopped" ? color.new(color.red, 70) : color.new(side_col, 30)
 
                             if na(entry_lbl)
                                 entry_lbl := label.new(bar_index, entry_price, lbl_suffix, color=state_bg, textcolor=state_col, style=label.style_label_left, size=size.tiny)
                                 stop_lbl := label.new(bar_index, stop_price, "Stop", color=color.new(color.red, 10), textcolor=color.red, style=label.style_label_left, size=size.tiny)
-                                tp1_lbl := label.new(bar_index, tp1, "TP1", color=color.new(side_col, 30), textcolor=side_col, style=label.style_label_left, size=size.tiny)
-                                tp2_lbl := label.new(bar_index, tp2, "TP2", color=color.new(side_col, 15), textcolor=side_col, style=label.style_label_left, size=size.tiny)
                                 array.set(ob_trade_entry, i, entry_lbl)
                                 array.set(ob_trade_stop, i, stop_lbl)
-                                array.set(ob_trade_tp1, i, tp1_lbl)
-                                array.set(ob_trade_tp2, i, tp2_lbl)
+                                if not na(tp1)
+                                    tp1_lbl := label.new(bar_index, tp1, "TP", color=color.new(side_col, 30), textcolor=side_col, style=label.style_label_left, size=size.tiny)
+                                    array.set(ob_trade_tp1, i, tp1_lbl)
+                                if not na(tp2)
+                                    tp2_lbl := label.new(bar_index, tp2, "TP", color=color.new(side_col, 15), textcolor=side_col, style=label.style_label_left, size=size.tiny)
+                                    array.set(ob_trade_tp2, i, tp2_lbl)
                             else
                                 label.set_x(entry_lbl, bar_index)
                                 label.set_y(entry_lbl, entry_price)
@@ -523,10 +522,10 @@ if array.size(ob_boxes) > 0
                                 if not na(stop_lbl)
                                     label.set_x(stop_lbl, bar_index)
                                     label.set_y(stop_lbl, stop_price)
-                                if not na(tp1_lbl)
+                                if not na(tp1_lbl) and not na(tp1)
                                     label.set_x(tp1_lbl, bar_index)
                                     label.set_y(tp1_lbl, tp1)
-                                if not na(tp2_lbl)
+                                if not na(tp2_lbl) and not na(tp2)
                                     label.set_x(tp2_lbl, bar_index)
                                     label.set_y(tp2_lbl, tp2)
 
@@ -554,7 +553,8 @@ if array.size(ob_boxes) > 0
                         label.set_y(array.get(ob_labels, i), lbl_y)
             
             // Remove old blocks
-            if not array.get(ob_active, i) and bar_index - array.get(ob_bars, i) > 100
+            inactive_age = bar_index - array.get(ob_bars, i)
+            if not array.get(ob_active, i) and (inactive_cleanup == 0 or inactive_age > inactive_cleanup)
                 box.delete(array.get(ob_boxes, i))
                 array.remove(ob_boxes, i)
                 array.remove(ob_labels, i)
@@ -615,9 +615,10 @@ sub_size = table_font_size == "small" ? size.small : size.tiny
 main_rows = 4 + table_max_key_rows + table_max_top_rows + (table_section_spacing * 4)
 main_rows := math.max(main_rows, 24)
 flow_header_rows = 1 + (table_compact ? 0 : 1)
-flow_rows = math.max(flow_rows_cap, flow_header_rows + lookback)
-rows_for_clusters = math.max(flow_rows - flow_header_rows, lookback)
-clusters_per_bar_limit = math.max(1, math.min(max_buckets_per_bar, math.max(1, math.floor((rows_for_clusters - lookback) / lookback))))
+ideal_flow_rows = flow_header_rows + lookback
+flow_rows = math.max(flow_header_rows + 1, math.min(flow_rows_cap, ideal_flow_rows))
+rows_for_clusters = math.max(1, flow_rows - flow_header_rows)
+clusters_per_bar_limit = math.max(1, math.min(max_buckets_per_bar, math.max(1, math.floor(rows_for_clusters / lookback))))
 tbl_pos = table_position == "top_right" ? position.top_right : (table_position == "middle_left" ? position.middle_left : position.middle_right)
 flow_pos = flow_table_position == "middle_left" ? position.middle_left : (flow_table_position == "bottom_right" ? position.bottom_right : position.middle_right)
 var table main_tbl = table.new(tbl_pos, 8, main_rows, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
