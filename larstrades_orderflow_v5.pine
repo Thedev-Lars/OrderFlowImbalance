@@ -182,7 +182,7 @@ mark_hist_state(int idx, string state, bool retested=false) =>
             array.set(hist_retests, idx, true)
 
 nearest_opposing_price(string side, float ref_price) =>
-    opp_price = na
+    float opp_price = na
     opp_side = side == "buy" ? "sell" : "buy"
     // Search active blocks first
     if array.size(ob_prices) > 0
