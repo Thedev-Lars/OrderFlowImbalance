@@ -184,6 +184,16 @@ var array<label> kl_trade_label = array.new<label>()
 var array<int> kl_reject_count = array.new<int>()
 var array<string> kl_outcome = array.new<string>()
 var array<float> kl_realized_ticks = array.new<float>()
+var array<bool> kl_closed_logged = array.new<bool>()
+
+// Persistent storage for closed trades (per session)
+var array<string> closed_side = array.new<string>()
+var array<float> closed_entry = array.new<float>()
+var array<float> closed_stop = array.new<float>()
+var array<float> closed_target = array.new<float>()
+var array<float> closed_rr = array.new<float>()
+var array<float> closed_ticks = array.new<float>()
+var array<string> closed_result = array.new<string>()
 
 // Session management
 var int last_session_day = 0
@@ -225,12 +235,31 @@ if current_day != last_session_day
     array.clear(kl_reject_count)
     array.clear(kl_outcome)
     array.clear(kl_realized_ticks)
+    array.clear(kl_closed_logged)
     array.clear(trade_state)
     array.clear(trade_entry)
     array.clear(trade_stop)
     array.clear(trade_target)
     array.clear(trade_ticks)
+    array.clear(closed_side)
+    array.clear(closed_entry)
+    array.clear(closed_stop)
+    array.clear(closed_target)
+    array.clear(closed_rr)
+    array.clear(closed_ticks)
+    array.clear(closed_result)
     last_session_day := current_day
+
+record_closed_trade(int idx) =>
+    if idx >= 0 and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
+        array.push(closed_side, array.get(kl_side, idx))
+        array.push(closed_entry, array.get(kl_entry_price, idx))
+        array.push(closed_stop, array.get(kl_stop_price, idx))
+        array.push(closed_target, array.get(kl_target_price, idx))
+        array.push(closed_rr, array.get(kl_rr_ratio, idx))
+        array.push(closed_ticks, array.get(kl_realized_ticks, idx))
+        array.push(closed_result, array.get(kl_outcome, idx))
+        array.set(kl_closed_logged, idx, true)
 
 get_tier(float peak_ratio) =>
     if peak_ratio >= extremeRatio
@@ -396,7 +425,8 @@ if barstate.isconfirmed
                 array.push(kl_target_line, na)
                 array.push(kl_trade_label, na)
                 array.push(kl_reject_count, 0)
-                
+                array.push(kl_closed_logged, false)
+
                 color box_color = side == "buy" ? color.new(col_buy, 70) : color.new(col_sell, 70)
                 box new_box = box.new(left=bar_index, top=range_top, right=bar_index + 1, bottom=range_bottom, border_color=box_color, bgcolor=box_color, border_width=1)
                 array.push(kl_box, new_box)
@@ -585,6 +615,7 @@ if barstate.isconfirmed
             array.pop(trade_stop)
             array.pop(trade_target)
             array.pop(trade_ticks)
+            array.pop(kl_closed_logged)
 
 // ============================================================================
 // LIFECYCLE UPDATE WITH ENTRY STATUS AND TRADE SETUP
@@ -613,6 +644,7 @@ if array.size(kl_state) > 0
                 array.set(kl_realized_ticks, i, ticks_val)
                 array.set(kl_outcome, i, current_state == STATE_PROFIT ? "Profit" : "Loss")
                 array.set(kl_state, i, STATE_CLOSED)
+                record_closed_trade(i)
 
             // ACTIVE → ENTRY (find valid trade setup)
             else if current_state == STATE_ACTIVE
@@ -702,6 +734,7 @@ if array.size(kl_state) > 0
                         array.set(kl_test_count, i, test_count + 1)
                         array.set(kl_reject_count, i, 0)
                         array.set(kl_last_test_bar, i, bar_index)
+                        record_closed_trade(i)
                     // Check for stop (with confirmation)
                     else if not na(stop) and close < stop
                         reject_count := reject_count + 1
@@ -712,6 +745,7 @@ if array.size(kl_state) > 0
                             array.set(kl_outcome, i, "Loss")
                             array.set(kl_state, i, STATE_CLOSED)
                             array.set(kl_last_test_bar, i, bar_index)
+                            record_closed_trade(i)
                     else
                         array.set(kl_reject_count, i, 0)
                     
@@ -725,6 +759,7 @@ if array.size(kl_state) > 0
                         array.set(kl_test_count, i, test_count + 1)
                         array.set(kl_reject_count, i, 0)
                         array.set(kl_last_test_bar, i, bar_index)
+                        record_closed_trade(i)
                     // Check for stop (with confirmation)
                     else if not na(stop) and close > stop
                         reject_count := reject_count + 1
@@ -735,6 +770,7 @@ if array.size(kl_state) > 0
                             array.set(kl_outcome, i, "Loss")
                             array.set(kl_state, i, STATE_CLOSED)
                             array.set(kl_last_test_bar, i, bar_index)
+                            record_closed_trade(i)
                     else
                         array.set(kl_reject_count, i, 0)
             
@@ -829,6 +865,7 @@ if array.size(trade_state) > 0
                         array.set(kl_outcome, i, "Profit")
                         array.set(kl_state, i, STATE_CLOSED)
                         array.set(kl_last_test_bar, i, bar_index)
+                        record_closed_trade(i)
                 else if hit_stop
                     float ticks_val = side == "buy" ? -((entry - stop) / syminfo.mintick) : -((stop - entry) / syminfo.mintick)
                     array.set(trade_ticks, i, ticks_val)
@@ -838,6 +875,7 @@ if array.size(trade_state) > 0
                         array.set(kl_outcome, i, "Loss")
                         array.set(kl_state, i, STATE_CLOSED)
                         array.set(kl_last_test_bar, i, bar_index)
+                        record_closed_trade(i)
 
 // ============================================================================
 // RENDERING - BOXES AND TRADE LINES
@@ -933,6 +971,7 @@ if array.size(kl_box) > 0
                         array.set(kl_trade_label, i, trade_label)
 
                 else if state == STATE_CLOSED
+                    record_closed_trade(i)
                     line entry_line = array.get(kl_entry_line, i)
                     if not na(entry_line)
                         line.delete(entry_line)
@@ -1065,20 +1104,10 @@ if barstate.islast
 
 var table tbl_flow = table.new(position=position.top_right, columns=12, rows=22, bgcolor=color.new(color.black, 85), border_width=1)
 
-// Table listing possible trades (levels currently in ENTRY state).  Shows
-// side, entry, stop, target, risk:reward and tier.  Positioned at the
-// bottom left of the screen.
-var table tbl_possible = table.new(position=position.bottom_left, columns=6, rows=10, bgcolor=color.new(color.black, 85), border_width=1)
-
-// Table listing open trades (levels currently in TESTING state).  Shows
-// side, entry, stop, target, risk:reward and current status (e.g. progress
-// in terms of R).  Positioned at the bottom right of the screen.
-var table tbl_open = table.new(position=position.bottom_right, columns=6, rows=10, bgcolor=color.new(color.black, 85), border_width=1)
-
-// Table listing closed trades (levels that have completed either Profit or Loss).  Shows side,
-// entry, stop, target, risk:reward, the number of ticks gained or lost, and the result.
-// Positioned at the bottom centre of the screen so that all three trade tables are visible.
-var table tbl_closed = table.new(position=position.bottom_center, columns=7, rows=10, bgcolor=color.new(color.black, 85), border_width=1)
+// Unified trades table holding possible, open, and closed trades in stacked sections.
+// Uses seven columns to accommodate the closed-trade tick/result data while keeping
+// consistent formatting for possible and open trades.
+var table tbl_trades = table.new(position=position.bottom_center, columns=7, rows=28, bgcolor=color.new(color.black, 85), border_width=1)
 
 if barstate.islast
     table.cell(tbl_flow, 0, 0, "ORDER FLOW HISTORY", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
@@ -1134,26 +1163,35 @@ if barstate.islast
         current_row += 1
 
     // ---------------------------------------------------------------------
-    // Populate the Possible Trades and Open Trades tables
-    // These tables provide a concise overview of actionable setups (ENTRY)
-    // and live trades (TESTING).  The logic iterates over all tracked key
-    // levels and extracts relevant fields for display.
-    
-    // Populate Possible Trades table header
-    // Rename header to clarify that these are trade setups ready to be triggered
-    table.cell(tbl_possible, 0, 0, "SET TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
-    table.merge_cells(tbl_possible, 0, 0, 5, 0)
-    table.cell(tbl_possible, 0, 1, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_possible, 1, 1, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_possible, 2, 1, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_possible, 3, 1, "Target", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_possible, 4, 1, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_possible, 5, 1, "Tier", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    int p_row = 2
-    int max_p = 8
+    // Unified trades table showing possible (ENTRY), open (TESTING) and closed trades.
     int total_levels = array.size(kl_state)
+    float closed_tick_sum = 0.0
+    for i_close = 0 to array.size(closed_ticks) - 1
+        float tick_val = array.get(closed_ticks, i_close)
+        if not na(tick_val)
+            closed_tick_sum += tick_val
+
+    // Table title
+    table.cell(tbl_trades, 0, 0, "TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
+    table.merge_cells(tbl_trades, 0, 0, 6, 0)
+
+    // Possible trades section
+    int t_row = 1
+    table.cell(tbl_trades, 0, t_row, "SET TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 70))
+    table.merge_cells(tbl_trades, 0, t_row, 6, t_row)
+    t_row += 1
+    table.cell(tbl_trades, 0, t_row, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 1, t_row, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 2, t_row, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 3, t_row, "Target", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 4, t_row, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 5, t_row, "Tier", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 6, t_row, "", bgcolor=color.new(color.gray, 70))
+    t_row += 1
+
+    int max_p = 8
     for idx = 0 to total_levels - 1
-        if p_row < max_p + 2
+        if t_row < max_p + 3
             string st = array.get(kl_state, idx)
             if st == STATE_ENTRY
                 string s_side = array.get(kl_side, idx)
@@ -1166,31 +1204,35 @@ if barstate.islast
                 string rr_str = na(e_rr) ? "-" : str.tostring(e_rr, "#.#")
                 color row_bg = s_side == "buy" ? color.new(col_buy, 90) : color.new(col_sell, 90)
                 color side_color2 = s_side == "buy" ? col_buy : col_sell
-                table.cell(tbl_possible, 0, p_row, side_str, text_color=side_color2, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_possible, 1, p_row, str.tostring(e_entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_possible, 2, p_row, str.tostring(e_stop, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_possible, 3, p_row, str.tostring(e_target, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_possible, 4, p_row, rr_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_possible, 5, p_row, e_tier, text_color=color.yellow, text_size=size.small, bgcolor=row_bg)
-                p_row := p_row + 1
-    // Fill remaining rows with dashes
-    for r = p_row to max_p + 1
-        for c = 0 to 5
-            table.cell(tbl_possible, c, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
-    
-    // Populate Open Trades table header
-    table.cell(tbl_open, 0, 0, "OPEN TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
-    table.merge_cells(tbl_open, 0, 0, 5, 0)
-    table.cell(tbl_open, 0, 1, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_open, 1, 1, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_open, 2, 1, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_open, 3, 1, "Target", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_open, 4, 1, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_open, 5, 1, "Status", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    int o_row = 2
-    int max_o = 8
+                table.cell(tbl_trades, 0, t_row, side_str, text_color=side_color2, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_trades, 1, t_row, str.tostring(e_entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_trades, 2, t_row, str.tostring(e_stop, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_trades, 3, t_row, str.tostring(e_target, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_trades, 4, t_row, rr_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_trades, 5, t_row, e_tier, text_color=color.yellow, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_trades, 6, t_row, "", bgcolor=row_bg)
+                t_row += 1
+    for r = t_row to max_p + 2
+        for c = 0 to 6
+            table.cell(tbl_trades, c, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
+    t_row := max_p + 3
+
+    // Open trades section (single row)
+    table.cell(tbl_trades, 0, t_row, "OPEN TRADE", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 70))
+    table.merge_cells(tbl_trades, 0, t_row, 6, t_row)
+    t_row += 1
+    table.cell(tbl_trades, 0, t_row, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 1, t_row, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 2, t_row, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 3, t_row, "Target", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 4, t_row, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 5, t_row, "Status", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 6, t_row, "", bgcolor=color.new(color.gray, 70))
+    t_row += 1
+
+    bool open_added = false
     for idx = 0 to total_levels - 1
-        if o_row < max_o + 2
+        if not open_added
             string st2 = array.get(kl_state, idx)
             if st2 == STATE_TESTING
                 string s_side2 = array.get(kl_side, idx)
@@ -1217,63 +1259,63 @@ if barstate.islast
                         status_str := "-"
                 else
                     status_str := "-"
-                table.cell(tbl_open, 0, o_row, side_str2, text_color=side_color3, text_size=size.small, bgcolor=row_bg3)
-                table.cell(tbl_open, 1, o_row, str.tostring(e_entry2, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg3)
-                table.cell(tbl_open, 2, o_row, str.tostring(e_stop2, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg3)
-                table.cell(tbl_open, 3, o_row, str.tostring(e_target2, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg3)
-                table.cell(tbl_open, 4, o_row, rr_str2, text_color=color.white, text_size=size.small, bgcolor=row_bg3)
-                table.cell(tbl_open, 5, o_row, status_str, text_color=color.white, text_size=size.small, bgcolor=row_bg3)
-                o_row := o_row + 1
-    // Fill remaining rows with dashes
-    for r = o_row to max_o + 1
-        for c = 0 to 5
-            table.cell(tbl_open, c, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
+                table.cell(tbl_trades, 0, t_row, side_str2, text_color=side_color3, text_size=size.small, bgcolor=row_bg3)
+                table.cell(tbl_trades, 1, t_row, str.tostring(e_entry2, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg3)
+                table.cell(tbl_trades, 2, t_row, str.tostring(e_stop2, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg3)
+                table.cell(tbl_trades, 3, t_row, str.tostring(e_target2, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg3)
+                table.cell(tbl_trades, 4, t_row, rr_str2, text_color=color.white, text_size=size.small, bgcolor=row_bg3)
+                table.cell(tbl_trades, 5, t_row, status_str, text_color=color.white, text_size=size.small, bgcolor=row_bg3)
+                table.cell(tbl_trades, 6, t_row, "", bgcolor=row_bg3)
+                open_added := true
+    if not open_added
+        for c = 0 to 6
+            table.cell(tbl_trades, c, t_row, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
+    t_row += 2
 
-    // ---------------------------------------------------------------------
-    // Populate the Closed Trades table.  These entries reflect trades that
-    // have completed either at target (profit) or stop (loss).  For each
-    // closed trade we show the side, entry, stop, target, RR, realised ticks
-    // gained or lost and whether the outcome was a Profit or Loss.
-    table.cell(tbl_closed, 0, 0, "CLOSED TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
-    table.merge_cells(tbl_closed, 0, 0, 6, 0)
-    table.cell(tbl_closed, 0, 1, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_closed, 1, 1, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_closed, 2, 1, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_closed, 3, 1, "Target", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_closed, 4, 1, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_closed, 5, 1, "Ticks", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_closed, 6, 1, "Result", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    int c_row = 2
+    // Closed trades section with total tick summary
+    table.cell(tbl_trades, 0, t_row, "CLOSED TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 70))
+    table.merge_cells(tbl_trades, 0, t_row, 6, t_row)
+    t_row += 1
+    table.cell(tbl_trades, 0, t_row, "Total Ticks", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+    table.merge_cells(tbl_trades, 0, t_row, 4, t_row)
+    table.cell(tbl_trades, 5, t_row, str.tostring(math.round(closed_tick_sum), "+#;-#"), text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+    table.cell(tbl_trades, 6, t_row, "", bgcolor=color.new(color.gray, 75))
+    t_row += 1
+    table.cell(tbl_trades, 0, t_row, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 1, t_row, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 2, t_row, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 3, t_row, "Target", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 4, t_row, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 5, t_row, "Ticks", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 6, t_row, "Result", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    t_row += 1
+
     int max_c = 8
-    for idx = 0 to total_levels - 1
-        if c_row < max_c + 2
-            string st3 = array.get(kl_state, idx)
-            // Include both Profit and Loss outcomes as closed trades
-            if st3 == STATE_CLOSED
-                string s_side3 = array.get(kl_side, idx)
-                float e_entry3 = array.get(kl_entry_price, idx)
-                float e_stop3 = array.get(kl_stop_price, idx)
-                float e_target3 = array.get(kl_target_price, idx)
-                float e_rr3 = array.get(kl_rr_ratio, idx)
-                float ticks_val = array.get(kl_realized_ticks, idx)
-                string result_str = array.get(kl_outcome, idx)
-                string side_str3 = s_side3 == "buy" ? "Buy" : "Sell"
-                string ticks_str = na(ticks_val) ? "-" : str.tostring(math.round(ticks_val), "+#;-#")
-                string rr_str3 = na(e_rr3) ? "-" : str.tostring(e_rr3, "#.#")
-                color row_bg4 = s_side3 == "buy" ? color.new(col_buy, 90) : color.new(col_sell, 90)
-                color side_color4 = s_side3 == "buy" ? col_buy : col_sell
-                table.cell(tbl_closed, 0, c_row, side_str3, text_color=side_color4, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_closed, 1, c_row, str.tostring(e_entry3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_closed, 2, c_row, str.tostring(e_stop3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_closed, 3, c_row, str.tostring(e_target3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_closed, 4, c_row, rr_str3, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_closed, 5, c_row, ticks_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_closed, 6, c_row, result_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                c_row := c_row + 1
-    // Fill remaining rows with dashes
-    for r = c_row to max_c + 1
+    for idx = 0 to array.size(closed_side) - 1
+        if t_row < 28
+            string s_side3 = array.get(closed_side, idx)
+            float e_entry3 = array.get(closed_entry, idx)
+            float e_stop3 = array.get(closed_stop, idx)
+            float e_target3 = array.get(closed_target, idx)
+            float e_rr3 = array.get(closed_rr, idx)
+            float ticks_val = array.get(closed_ticks, idx)
+            string result_str = array.get(closed_result, idx)
+            string side_str3 = s_side3 == "buy" ? "Buy" : "Sell"
+            string ticks_str = na(ticks_val) ? "-" : str.tostring(math.round(ticks_val), "+#;-#")
+            string rr_str3 = na(e_rr3) ? "-" : str.tostring(e_rr3, "#.#")
+            color row_bg4 = s_side3 == "buy" ? color.new(col_buy, 90) : color.new(col_sell, 90)
+            color side_color4 = s_side3 == "buy" ? col_buy : col_sell
+            table.cell(tbl_trades, 0, t_row, side_str3, text_color=side_color4, text_size=size.small, bgcolor=row_bg4)
+            table.cell(tbl_trades, 1, t_row, str.tostring(e_entry3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+            table.cell(tbl_trades, 2, t_row, str.tostring(e_stop3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+            table.cell(tbl_trades, 3, t_row, str.tostring(e_target3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+            table.cell(tbl_trades, 4, t_row, rr_str3, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+            table.cell(tbl_trades, 5, t_row, ticks_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+            table.cell(tbl_trades, 6, t_row, result_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
+            t_row += 1
+    for r = t_row to math.min(27, t_row + max_c)
         for col = 0 to 6
-            table.cell(tbl_closed, col, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
+            table.cell(tbl_trades, col, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
     
     table.cell(tbl_flow, 0, current_row, "", bgcolor=color.new(color.gray, 80))
     table.merge_cells(tbl_flow, 0, current_row, 11, current_row)
