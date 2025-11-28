@@ -346,6 +346,66 @@ find_next_target(int current_idx, string current_side) =>
 
     target
 
+// Create a trade for a given key level index using the unified swing + ATR stop
+// model and RR-banded target selection. Returns true on success.
+bool create_trade_for_level(int idx) =>
+    string side = array.get(kl_side, idx)
+    float poc = array.get(kl_poc, idx)
+
+    if na(side)
+        false
+    else
+        float swingPrice = side == "buy" ? ta.lowest(low, swingLookback) : ta.highest(high, swingLookback)
+        if na(swingPrice)
+            false
+        else
+            float swingDistTicks = math.abs(poc - swingPrice) / syminfo.mintick
+            float atrTicks = atr / syminfo.mintick
+            float rawStopTicks = swingDistTicks + (atrTicks * atrMult)
+            float clampedStopTicks = math.max(minStopTicks, math.min(rawStopTicks, maxStopTicks))
+            float stop = side == "buy" ? poc - clampedStopTicks * syminfo.mintick : poc + clampedStopTicks * syminfo.mintick
+            float risk = math.abs(poc - stop)
+
+            if risk <= 0
+                false
+            else
+                float level_target = find_next_target(idx, side)
+
+                float target_to_use = na
+                float rr_to_use = na
+
+                if not na(level_target)
+                    float reward_level = math.abs(level_target - poc)
+                    float rr_level = risk > 0 ? reward_level / risk : na
+                    if not na(rr_level) and rr_level >= minRR and rr_level <= maxRR
+                        target_to_use := level_target
+                        rr_to_use := rr_level
+
+                if na(target_to_use) or na(rr_to_use)
+                    float dir = side == "buy" ? 1.0 : -1.0
+                    target_to_use := poc + dir * (risk * minRR)
+                    rr_to_use := minRR
+
+                if rr_to_use > maxRR
+                    float dir = side == "buy" ? 1.0 : -1.0
+                    target_to_use := poc + dir * (risk * maxRR)
+                    rr_to_use := maxRR
+
+                array.set(kl_entry_price, idx, poc)
+                array.set(kl_stop_price, idx, stop)
+                array.set(kl_target_price, idx, target_to_use)
+                array.set(kl_rr_ratio, idx, rr_to_use)
+                array.set(kl_state, idx, STATE_ENTRY)
+                array.set(kl_last_test_bar, idx, bar_index)
+
+                array.set(trade_state, idx, TE_STATE_POSSIBLE)
+                array.set(trade_entry, idx, poc)
+                array.set(trade_stop, idx, stop)
+                array.set(trade_target, idx, target_to_use)
+                array.set(trade_ticks, idx, na)
+
+                true
+
 clear_debug_drawings() =>
     if not na(debugEntryLine)
         line.delete(debugEntryLine)
@@ -720,60 +780,10 @@ if array.size(kl_state) > 0
                     // the baseline imbalance ratio. Extreme tiers still override both.
                     bool passFilter = not trendFilterEnabled or (trendAlign and (opposition_ok or extremeLevel)) or extremeLevel
 
-                    // Find the nearest opposing imbalance POC for targeting
-                    float target = find_next_target(i, side)
                     if passFilter
-                        float entry = poc
-                        // Build a stop from recent swing structure plus an ATR buffer, clamped between
-                        // minStopTicks and maxStopTicks to avoid razor-thin or fantasy-wide stops.
-                        float swingPrice = side == "buy" ? ta.lowest(low, swingLookback) : ta.highest(high, swingLookback)
-                        if not na(swingPrice)
-                            float swingDistPrice = math.abs(entry - swingPrice)
-                            float swingDistTicks = swingDistPrice / syminfo.mintick
-                            float atrTicks = atr / syminfo.mintick
-                            float rawStopTicks = swingDistTicks + (atrTicks * atrMult)
-                            float clampedStopTicks = math.max(minStopTicks, math.min(rawStopTicks, maxStopTicks))
-                            float stop = side == "buy" ? entry - clampedStopTicks * syminfo.mintick : entry + clampedStopTicks * syminfo.mintick
-                            float risk = math.abs(entry - stop)
-
-                            // Prefer the nearest opposing level when its RR sits within the allowed band.
-                            float target_to_use = na
-                            float rr_to_use = na
-
-                            if not na(target) and risk > 0
-                                float reward_level = math.abs(target - entry)
-                                float rr_level = reward_level / risk
-                                if rr_level >= minRR and rr_level <= maxRR
-                                    target_to_use := target
-                                    rr_to_use := rr_level
-
-                            // Fall back to a clean RR multiple if no acceptable opposing level exists
-                            if na(target_to_use) or na(rr_to_use)
-                                float dir = side == "buy" ? 1.0 : -1.0
-                                target_to_use := entry + dir * (risk * minRR)
-                                rr_to_use := minRR
-
-                            // Hard cap RR so labels never show unrealistic 7R+ setups
-                            if rr_to_use > maxRR
-                                float dir = side == "buy" ? 1.0 : -1.0
-                                target_to_use := entry + dir * (risk * maxRR)
-                                rr_to_use := maxRR
-
-                            if risk > 0
-                                array.set(kl_entry_price, i, entry)
-                                array.set(kl_stop_price, i, stop)
-                                array.set(kl_target_price, i, target_to_use)
-                                array.set(kl_rr_ratio, i, rr_to_use)
-                                array.set(kl_state, i, STATE_ENTRY)
-                                array.set(trade_state, i, TE_STATE_POSSIBLE)
-                                array.set(trade_entry, i, entry)
-                                array.set(trade_stop, i, stop)
-                                array.set(trade_target, i, target_to_use)
-                                array.set(trade_ticks, i, na)
-                                array.set(kl_last_test_bar, i, bar_index)
-                            else
-                                array.set(kl_last_test_bar, i, bar_index)
-                        else
+                        // Use the unified swing+ATR stop and RR-banded targeting helper
+                        bool created = create_trade_for_level(i)
+                        if not created
                             array.set(kl_last_test_bar, i, bar_index)
                     else
                         // Filters not satisfied – remain ACTIVE and record touch
@@ -840,45 +850,19 @@ if array.size(kl_state) > 0
                 // Check for retouch
                 bool touching_again = (low <= range_top) and (high >= range_bottom)
                 if touching_again and (bar_index > last_test + 3)
-                    float target = find_next_target(i, side)
-                    if not na(target)
-                        float entry = poc
-                        float stop = side == "buy" ? range_bottom - reject_buffer : range_top + reject_buffer
-                        float risk = math.abs(entry - stop)
-                        float reward = math.abs(target - entry)
-                        float rr = risk > 0 ? reward / risk : na
-                        if not na(rr) and rr >= minRR
-                            float dir = side == "buy" ? 1.0 : -1.0
-                            float capped_target = rr > maxRR ? entry + dir * (risk * maxRR) : target
-                            float rr_to_use = math.min(rr, maxRR)
-                            array.set(kl_entry_price, i, entry)
-                            array.set(kl_stop_price, i, stop)
-                            array.set(kl_target_price, i, capped_target)
-                            array.set(kl_rr_ratio, i, rr_to_use)
-                            array.set(kl_state, i, STATE_ENTRY)
-                            array.set(kl_last_test_bar, i, bar_index)
+                    // Retouch entries share the same stop/target sizing as first touches
+                    bool created = create_trade_for_level(i)
+                    if not created
+                        array.set(kl_last_test_bar, i, bar_index)
 
             // HELD
             else if current_state == STATE_HELD
                 bool touching_again = (low <= range_top) and (high >= range_bottom)
                 if touching_again and (bar_index > last_test + 3)
-                    float target = find_next_target(i, side)
-                    if not na(target)
-                        float entry = poc
-                        float stop = side == "buy" ? range_bottom - reject_buffer : range_top + reject_buffer
-                        float risk = math.abs(entry - stop)
-                        float reward = math.abs(target - entry)
-                        float rr = risk > 0 ? reward / risk : na
-                        if not na(rr) and rr >= minRR
-                            float dir = side == "buy" ? 1.0 : -1.0
-                            float capped_target = rr > maxRR ? entry + dir * (risk * maxRR) : target
-                            float rr_to_use = math.min(rr, maxRR)
-                            array.set(kl_entry_price, i, entry)
-                            array.set(kl_stop_price, i, stop)
-                            array.set(kl_target_price, i, capped_target)
-                            array.set(kl_rr_ratio, i, rr_to_use)
-                            array.set(kl_state, i, STATE_ENTRY)
-                            array.set(kl_last_test_bar, i, bar_index)
+                    // Re-engage held levels with the unified trade creation rules
+                    bool created = create_trade_for_level(i)
+                    if not created
+                        array.set(kl_last_test_bar, i, bar_index)
 
 // ============================================================================
 // TRADE ENGINE V2 - EXECUTION
