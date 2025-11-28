@@ -8,6 +8,12 @@ lookback = input.int(6, "Bars to Analyze", minval=1, maxval=20, group=grp1)
 levels = input.int(5, "Levels per Bar", minval=2, maxval=10, group=grp1)
 max_buckets_per_bar = input.int(8, "Max Buckets per Bar", minval=2, maxval=20, group=grp1)
 top_tick_window = input.int(20, "Bars for Top Ticks", minval=5, maxval=100, group=grp1)
+table_font_size = input.string("normal", "Table Font Size", options=["small", "normal", "large"], group=grp1)
+table_position = input.string("top_right", "Table Position", options=["top_right", "middle_right"], group=grp1)
+table_section_spacing = input.int(1, "Section Spacing Rows", minval=0, maxval=3, group=grp1)
+table_max_key_rows = input.int(8, "Max Key Level Rows", minval=3, maxval=15, group=grp1)
+table_max_top_rows = input.int(6, "Max Top Tick Rows", minval=3, maxval=12, group=grp1)
+table_compact = input.bool(false, "Compact Table Mode", group=grp1)
 
 grp2 = "Order Blocks"
 show_blocks = input.bool(true, "Show Order Blocks", group=grp2)
@@ -578,8 +584,18 @@ if barstate.isconfirmed
         alert(filled_block_message, alert.freq_once_per_bar_close)
 
 // ==================== TABLES ====================
-table_rows = 40
-var table main_tbl = table.new(position.middle_right, 8, table_rows, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
+// Typography helpers for consistent sizing
+tbl_size(string opt) =>
+    opt == "large" ? size.large : (opt == "normal" ? size.normal : size.small)
+
+base_size = tbl_size(table_font_size)
+header_size = table_font_size == "large" ? size.large : size.normal
+sub_size = table_font_size == "small" ? size.small : size.tiny
+
+// Allow taller tables to fit padding rows and section dividers
+table_rows = 80
+tbl_pos = table_position == "top_right" ? position.top_right : position.middle_right
+var table main_tbl = table.new(tbl_pos, 8, table_rows, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
 
 // Scratch arrays for clustered order flow (per bar)
 var float[] cluster_low = array.new_float()
@@ -708,8 +724,18 @@ if barstate.islast and show_table
                 array.push(cluster_bar, b)
 
     // ========== KEY LEVELS SECTION (persistent) ==========
-    table.cell(main_tbl, 0, 0, "⚡ KEY LEVELS", text_color=col_accent, text_size=size.normal, bgcolor=color.new(color.black, 0))
-    table.merge_cells(main_tbl, 0, 0, 4, 0)
+    row_idx = 0
+    table.cell(main_tbl, 0, row_idx, "KEY LEVELS", text_color=color.black, text_size=header_size, bgcolor=color.new(col_accent, 0), text_halign=text.align_left)
+    table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+    row_idx += 1
+
+    // Optional divider/buffer rows for breathing room
+    spacer = table_compact ? 0 : table_section_spacing
+    for _ = 0 to spacer - 1
+        if row_idx < table_rows
+            table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+            table.cell(main_tbl, 0, row_idx, "──────", text_color=color.new(color.gray, 20), text_size=sub_size, bgcolor=color.new(color.black, 90))
+            row_idx += 1
 
     // Expire stale historical levels
     if array.size(hist_prices) > 0
@@ -717,14 +743,12 @@ if barstate.islast and show_table
             if array.get(hist_states, i) == "active" and bar_index - array.get(hist_bars, i) > hist_lifespan
                 array.set(hist_states, i, "expired")
 
-    row_idx = 1
-    max_key_rows = 5
+    max_key_rows = table_max_key_rows
     if array.size(hist_prices) > 0
         for i = array.size(hist_prices) - 1 to 0
-            if row_idx > max_key_rows
+            if row_idx >= table_rows or row_idx - spacer >= max_key_rows + 1
                 break
 
-            price = array.get(hist_prices, i)
             ratio = array.get(hist_ratios, i)
             is_buy = array.get(hist_is_buy, i)
             score = array.get(hist_scores, i)
@@ -737,32 +761,57 @@ if barstate.islast and show_table
 
             actionable = state == "active" or show_faded_levels
             if actionable and (ratio >= 3.0 or state != "expired")
-                bg = state == "active" ? (is_buy ? color.new(col_buy, 55) : color.new(col_sell, 55)) : color.new(color.gray, 80)
+                active_state = state == "active"
                 side_col = is_buy ? col_buy : col_sell
-                state_txt = state == "active" ? "OPEN" : (state == "filled" ? "FILLED" : "EXPIRED")
+                bg = active_state ? color.new(side_col, 82) : color.new(color.gray, 86)
+                side_icon = is_buy ? "🟢" : "🟣"
+                flag_icon = (stacked_hit ? "🧱" : "") + (retest_hit ? "🎯" : "") + (state != "active" ? "❌" : "")
+                range_txt = str.tostring(bot_rng, format.mintick) + " - " + str.tostring(top_rng, format.mintick)
                 age_txt = "+" + str.tostring(age) + " bars"
+                ratio_txt = str.tostring(ratio, "#.#") + ":1"
+                score_txt = str.tostring(score, "#.##")
+                state_txt = state == "active" ? "OPEN" : (state == "filled" ? "FILLED" : "EXPIRED")
 
-                table.cell(main_tbl, 0, row_idx, str.tostring(bot_rng, format.mintick) + "-" + str.tostring(top_rng, format.mintick), text_color=color.white, text_size=size.small, bgcolor=bg)
-                table.cell(main_tbl, 1, row_idx, stacked_hit ? "⧉" : "", text_color=col_accent, text_size=size.tiny, bgcolor=bg)
-                table.cell(main_tbl, 2, row_idx, retest_hit ? "↺" : "", text_color=col_accent, text_size=size.tiny, bgcolor=bg)
-                table.cell(main_tbl, 3, row_idx, state_txt + " " + age_txt, text_color=side_col, text_size=size.tiny, bgcolor=bg)
-                table.cell(main_tbl, 4, row_idx, str.tostring(score, "#.##") + " | " + (is_buy ? "BUY" : "SELL"), text_color=side_col, text_size=size.tiny, bgcolor=bg)
+                table.cell(main_tbl, 0, row_idx, side_icon, text_color=side_col, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+                table.cell(main_tbl, 1, row_idx, range_txt, text_color=color.white, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+                table.cell(main_tbl, 2, row_idx, state_txt, text_color=side_col, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+                table.cell(main_tbl, 3, row_idx, age_txt, text_color=color.new(color.white, 0), text_size=sub_size, bgcolor=bg, text_halign=text.align_right)
+                table.cell(main_tbl, 4, row_idx, ratio_txt, text_color=side_col, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+                table.cell(main_tbl, 5, row_idx, score_txt, text_color=side_col, text_size=sub_size, bgcolor=bg, text_halign=text.align_right)
+                table.cell(main_tbl, 6, row_idx, flag_icon, text_color=col_accent, text_size=sub_size, bgcolor=bg, text_halign=text.align_left)
+                table.cell(main_tbl, 7, row_idx, is_buy ? "BUY" : "SELL", text_color=side_col, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
                 row_idx += 1
 
-    while row_idx <= max_key_rows
-        table.cell(main_tbl, 0, row_idx, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
-        table.cell(main_tbl, 1, row_idx, "", bgcolor=color.new(color.gray, 85))
-        table.cell(main_tbl, 2, row_idx, "", bgcolor=color.new(color.gray, 85))
-        table.cell(main_tbl, 3, row_idx, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
-        table.cell(main_tbl, 4, row_idx, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
+    while row_idx - spacer < max_key_rows + 1 and row_idx < table_rows
+        filler_bg = color.new(color.gray, 90)
+        table.cell(main_tbl, 0, row_idx, "", bgcolor=filler_bg)
+        table.cell(main_tbl, 1, row_idx, "", bgcolor=filler_bg)
+        table.cell(main_tbl, 2, row_idx, "", bgcolor=filler_bg)
+        table.cell(main_tbl, 3, row_idx, "", bgcolor=filler_bg)
+        table.cell(main_tbl, 4, row_idx, "", bgcolor=filler_bg)
+        table.cell(main_tbl, 5, row_idx, "", bgcolor=filler_bg)
+        table.cell(main_tbl, 6, row_idx, "", bgcolor=filler_bg)
+        table.cell(main_tbl, 7, row_idx, "", bgcolor=filler_bg)
         row_idx += 1
 
-    // ========== TOP VOLUME TICKS (rolling 20 bars) ==========
-    table.cell(main_tbl, 5, 0, "TOP TICKS", text_color=col_accent, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.merge_cells(main_tbl, 5, 0, 7, 0)
-    table.cell(main_tbl, 5, 1, "Price", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 6, 1, "Vol", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 7, 1, "Side", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
+    // Breathing room before next section
+    spacer_rows = table_compact ? 0 : table_section_spacing
+    for _ = 0 to spacer_rows - 1
+        if row_idx < table_rows
+            table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+            table.cell(main_tbl, 0, row_idx, "", bgcolor=color.new(color.black, 85))
+            row_idx += 1
+
+    // ========== TOP VOLUME TICKS (rolling window) ==========
+    if row_idx < table_rows
+        table.cell(main_tbl, 0, row_idx, "TOP TICKS", text_color=color.black, text_size=header_size, bgcolor=color.new(col_accent, 0), text_halign=text.align_left)
+        table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+        row_idx += 1
+
+    if not table_compact and row_idx < table_rows
+        table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+        table.cell(main_tbl, 0, row_idx, "──────", text_color=color.new(color.gray, 20), text_size=sub_size, bgcolor=color.new(color.black, 90))
+        row_idx += 1
 
     array.clear(tick_prices)
     array.clear(tick_vols)
@@ -799,7 +848,6 @@ if barstate.islast and show_table
                     array.push(tick_vols, total_vol)
                     array.push(tick_sides, dom_side)
 
-    // Rank ticks by volume
     if array.size(tick_vols) > 1
         for x = 0 to array.size(tick_vols) - 2
             for y = 0 to array.size(tick_vols) - x - 2
@@ -816,44 +864,50 @@ if barstate.islast and show_table
                     array.set(tick_prices, y + 1, tmp_price)
                     array.set(tick_sides, y + 1, tmp_side)
 
-    top_rows = 5
-    for i = 0 to top_rows - 1
+    for i = 0 to table_max_top_rows - 1
+        if row_idx >= table_rows
+            break
         if i < array.size(tick_prices)
             side = array.get(tick_sides, i)
             side_col = side == "buy" ? col_buy : col_sell
-            bg = color.new(side_col, 80)
-            table.cell(main_tbl, 5, i + 2, str.tostring(array.get(tick_prices, i), format.mintick), text_color=color.white, text_size=size.tiny, bgcolor=bg)
-            table.cell(main_tbl, 6, i + 2, str.tostring(math.round(array.get(tick_vols, i))), text_color=side_col, text_size=size.tiny, bgcolor=bg)
-            table.cell(main_tbl, 7, i + 2, side == "buy" ? "BUY" : "SELL", text_color=side_col, text_size=size.tiny, bgcolor=bg)
+            bg = color.new(side_col, 82)
+            table.cell(main_tbl, 0, row_idx, side == "buy" ? "🟢" : "🟣", text_color=side_col, text_size=base_size, bgcolor=bg)
+            table.cell(main_tbl, 1, row_idx, str.tostring(array.get(tick_prices, i), format.mintick), text_color=color.white, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+            table.cell(main_tbl, 2, row_idx, str.tostring(math.round(array.get(tick_vols, i))), text_color=side_col, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+            table.merge_cells(main_tbl, 3, row_idx, 7, row_idx)
+            table.cell(main_tbl, 3, row_idx, side == "buy" ? "BUY" : "SELL", text_color=side_col, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
         else
-            table.cell(main_tbl, 5, i + 2, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
-            table.cell(main_tbl, 6, i + 2, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
-            table.cell(main_tbl, 7, i + 2, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 85))
+            for c = 0 to 7
+                table.cell(main_tbl, c, row_idx, "", bgcolor=color.new(color.gray, 90))
+        row_idx += 1
+
+    spacer_rows := table_compact ? 0 : table_section_spacing
+    for _ = 0 to spacer_rows - 1
+        if row_idx < table_rows
+            table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+            table.cell(main_tbl, 0, row_idx, "", bgcolor=color.new(color.black, 85))
+            row_idx += 1
 
     // ========== ORDER FLOW CLUSTERS ==========
-    start_row = 8
-    table.cell(main_tbl, 0, 6, "ORDER FLOW (LAST 6)", text_color=col_accent, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.merge_cells(main_tbl, 0, 6, 7, 6)
+    if row_idx < table_rows
+        table.cell(main_tbl, 0, row_idx, "ORDER FLOW CLUSTERS", text_color=color.black, text_size=header_size, bgcolor=color.new(col_accent, 0), text_halign=text.align_left)
+        table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+        row_idx += 1
 
-    table.cell(main_tbl, 0, 7, "Bar", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 1, 7, "Range", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 2, 7, "Buy", text_color=col_buy, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 3, 7, "Sell", text_color=col_sell, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 4, 7, "Δ", text_color=col_accent, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 5, 7, "Ratio", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 6, 7, "Score", text_color=col_accent, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
-    table.cell(main_tbl, 7, 7, "Side", text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 70))
+    if not table_compact and row_idx < table_rows
+        table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+        table.cell(main_tbl, 0, row_idx, "──────", text_color=color.new(color.gray, 20), text_size=sub_size, bgcolor=color.new(color.black, 90))
+        row_idx += 1
 
-    row = start_row
     for i = 0 to array.size(cluster_kind) - 1
-        if row >= table_rows
+        if row_idx >= table_rows
             break
         kind = array.get(cluster_kind, i)
         if kind == "header"
             hdr = array.get(cluster_label, i)
-            table.cell(main_tbl, 0, row, "BAR " + hdr, text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.gray, 80))
-            table.merge_cells(main_tbl, 0, row, 7, row)
-            row += 1
+            table.cell(main_tbl, 0, row_idx, "BAR " + hdr, text_color=color.white, text_size=base_size, bgcolor=color.new(color.gray, 75), text_halign=text.align_left)
+            table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
+            row_idx += 1
         else
             lo = array.get(cluster_low, i)
             hi = array.get(cluster_high, i)
@@ -863,28 +917,28 @@ if barstate.islast and show_table
             score = array.get(cluster_score, i)
             is_buy = array.get(cluster_is_buy, i)
             delta = bv - sv
-            bg = is_buy ? color.new(col_buy, 78) : color.new(col_sell, 78)
+            bg = is_buy ? color.new(col_buy, 82) : color.new(col_sell, 82)
 
-            table.cell(main_tbl, 0, row, array.get(cluster_label, i), text_color=color.white, text_size=size.tiny, bgcolor=bg)
-            table.cell(main_tbl, 1, row, str.tostring(lo, format.mintick) + "-" + str.tostring(hi, format.mintick), text_color=color.white, text_size=size.tiny, bgcolor=bg)
-            table.cell(main_tbl, 2, row, str.tostring(math.round(bv)), text_color=col_buy, text_size=size.tiny, bgcolor=bg)
-            table.cell(main_tbl, 3, row, str.tostring(math.round(sv)), text_color=col_sell, text_size=size.tiny, bgcolor=bg)
-            table.cell(main_tbl, 4, row, str.tostring(math.round(delta)), text_color=delta >= 0 ? col_buy : col_sell, text_size=size.tiny, bgcolor=bg)
-            table.cell(main_tbl, 5, row, str.tostring(ratio, "#.#") + ":1", text_color=is_buy ? col_buy : col_sell, text_size=size.tiny, bgcolor=bg)
-            table.cell(main_tbl, 6, row, str.tostring(score, "#.##"), text_color=is_buy ? col_buy : col_sell, text_size=size.tiny, bgcolor=bg)
-            table.cell(main_tbl, 7, row, is_buy ? "BUY" : "SELL", text_color=is_buy ? col_buy : col_sell, text_size=size.tiny, bgcolor=bg)
-            row += 1
+            table.cell(main_tbl, 0, row_idx, is_buy ? "🟢" : "🟣", text_color=is_buy ? col_buy : col_sell, text_size=sub_size, bgcolor=bg)
+            table.cell(main_tbl, 1, row_idx, str.tostring(lo, format.mintick) + " - " + str.tostring(hi, format.mintick), text_color=color.white, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+            table.cell(main_tbl, 2, row_idx, str.tostring(math.round(bv)), text_color=col_buy, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+            table.cell(main_tbl, 3, row_idx, str.tostring(math.round(sv)), text_color=col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+            table.cell(main_tbl, 4, row_idx, str.tostring(math.round(delta)), text_color=delta >= 0 ? col_buy : col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+            table.cell(main_tbl, 5, row_idx, str.tostring(ratio, "#.#") + ":1", text_color=is_buy ? col_buy : col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_right)
+            table.cell(main_tbl, 6, row_idx, str.tostring(score, "#.##"), text_color=is_buy ? col_buy : col_sell, text_size=sub_size, bgcolor=bg, text_halign=text.align_right)
+            table.cell(main_tbl, 7, row_idx, is_buy ? "BUY" : "SELL", text_color=is_buy ? col_buy : col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
+            row_idx += 1
 
-    while row < table_rows
-        table.cell(main_tbl, 0, row, "", bgcolor=color.new(color.gray, 90))
-        table.cell(main_tbl, 1, row, "", bgcolor=color.new(color.gray, 90))
-        table.cell(main_tbl, 2, row, "", bgcolor=color.new(color.gray, 90))
-        table.cell(main_tbl, 3, row, "", bgcolor=color.new(color.gray, 90))
-        table.cell(main_tbl, 4, row, "", bgcolor=color.new(color.gray, 90))
-        table.cell(main_tbl, 5, row, "", bgcolor=color.new(color.gray, 90))
-        table.cell(main_tbl, 6, row, "", bgcolor=color.new(color.gray, 90))
-        table.cell(main_tbl, 7, row, "", bgcolor=color.new(color.gray, 90))
-        row += 1
+    while row_idx < table_rows
+        table.cell(main_tbl, 0, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 1, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 2, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 3, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 4, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 5, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 6, row_idx, "", bgcolor=color.new(color.gray, 92))
+        table.cell(main_tbl, 7, row_idx, "", bgcolor=color.new(color.gray, 92))
+        row_idx += 1
 // ==================== ACTIVE COUNT LABEL ====================
 var label count_lbl = na
 

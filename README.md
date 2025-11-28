@@ -19,6 +19,7 @@ A TradingView Pine Script indicator that highlights intrabar order-flow imbalanc
 - **Trade Markers**: Toggle plotting trade cues, set entry/stop offsets, and configure TP behavior (R:R or nearest opposing level).
 - **Colors**: Customize buy, sell, and accent colors.
 - **Alerts**: Toggle alerts for new blocks, retests, and filled blocks.
+- **Table Display**: Choose font size, table position (top or middle right), per-section row caps (Key Levels/Top Ticks), and spacing/compact mode for easier readability during fast markets.
 
 ## Notes
 - The script estimates buy/sell split using candle structure heuristics; it does not access TradingView footprint data directly.
