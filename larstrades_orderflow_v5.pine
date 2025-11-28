@@ -312,9 +312,10 @@ if array.size(ob_boxes) > 0
                 array.remove(ob_states, i)
 
 // ==================== ALERTS ====================
-alertcondition(alert_new_blocks and new_block_trigger, "New imbalance zone", new_block_message)
-alertcondition(alert_retest_blocks and retest_block_trigger, "Imbalance retested", retest_block_message)
-alertcondition(alert_filled_blocks and filled_block_trigger, "Imbalance filled", filled_block_message)
+// Pine requires a const string for the alertcondition message; per-event details are sent via alert() below
+alertcondition(alert_new_blocks and new_block_trigger, "New imbalance zone", "New imbalance zone")
+alertcondition(alert_retest_blocks and retest_block_trigger, "Imbalance retested", "Imbalance retested")
+alertcondition(alert_filled_blocks and filled_block_trigger, "Imbalance filled", "Imbalance filled")
 
 if barstate.isconfirmed
     if alert_new_blocks and new_block_trigger and str.length(new_block_message) > 0
