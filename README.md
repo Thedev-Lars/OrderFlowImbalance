@@ -19,7 +19,7 @@ A TradingView Pine Script indicator that highlights intrabar order-flow imbalanc
 - **Trade Markers**: Toggle plotting trade cues, set entry offsets, and configure TP behavior (defaults to nearest opposing level with a fixed 6-tick stop beyond the zone).
 - **Colors**: Customize buy, sell, and accent colors.
 - **Alerts**: Toggle alerts for new blocks, retests, and filled blocks.
-- **Table Display**: Choose font size, key/top table position (top/middle right or middle left), per-section row caps (Key Levels/Top Ticks), and spacing/compact mode for easier readability during fast markets; order-flow clusters can be positioned independently to keep both tables shorter and clearer.
+- **Table Display**: Choose font size, key/top table position (top/middle right or middle left), per-section row caps (Key Levels/Top Ticks), a hard cap for order-flow rows, and spacing/compact mode for easier readability during fast markets; order-flow clusters can be positioned independently to keep both tables shorter and clearer. An optional active-count label can be hidden by default to reduce pane clutter.
 
 ## Notes
 - The script estimates buy/sell split using candle structure heuristics; it does not access TradingView footprint data directly.
