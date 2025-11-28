@@ -8,7 +8,7 @@ A TradingView Pine Script indicator that highlights intrabar order-flow imbalanc
 - Surfaces standout intrabar imbalances with a persistent Key Levels memory (keeps notable ratios since the script was loaded) while preferring the freshest bars first and marking when an active block sits on top of the level.
 - Displays per-bar order-flow clusters for the last six candles using ATR-sized price buckets (green for buys, purple for sells), plus a rolling “top ticks” strip that ranks the highest-volume price buckets over the last ~20 bars by actual intra-bar bucket volume.
 - Persists key levels across the session with state (open/filled/expired), age, and retest/stack flags so recent imbalances remain visible even after scrolling.
-- (Optional) Draws compact trade markers (entry/stop/TP1/TP2) whenever a block is retested, and greys them out when the block is filled or expires; targets can follow fixed R:R or the nearest opposing imbalance.
+- (Optional) Draws compact trade markers (entry/stop/TP1/TP2) whenever a block is retested, and greys them out when the block is filled or expires; stops sit 6 ticks beyond the zone edge and targets prefer the nearest opposing imbalance (falling back to R:R only if nothing is found).
 - Alerts fire for new imbalance blocks, retests of active zones, and when an active block is filled.
 
 ## Inputs
@@ -16,10 +16,10 @@ A TradingView Pine Script indicator that highlights intrabar order-flow imbalanc
 - **Min Ratio for Block** / **Min Volume Multiplier**: Thresholds to qualify a new imbalance zone (extra-high ratios can still print blocks even if volume is only average).
 - **Max Active Blocks** / **Min Points Between Blocks**: Controls chart clutter while also defining the gap used to flag stacked blocks.
 - **Bars to Keep Unfilled Blocks** / **Key Level Lifespan** / **Max Stored Key Levels**: Control how long active and historical imbalances remain visible before fading.
-- **Trade Markers**: Toggle plotting trade cues, set entry/stop offsets, and configure TP behavior (R:R or nearest opposing level).
+- **Trade Markers**: Toggle plotting trade cues, set entry offsets, and configure TP behavior (defaults to nearest opposing level with a fixed 6-tick stop beyond the zone).
 - **Colors**: Customize buy, sell, and accent colors.
 - **Alerts**: Toggle alerts for new blocks, retests, and filled blocks.
-- **Table Display**: Choose font size, table position (top or middle right), per-section row caps (Key Levels/Top Ticks), and spacing/compact mode for easier readability during fast markets.
+- **Table Display**: Choose font size, key/top table position (top/middle right or middle left), per-section row caps (Key Levels/Top Ticks), and spacing/compact mode for easier readability during fast markets; order-flow clusters can be positioned independently to keep both tables shorter and clearer.
 
 ## Notes
 - The script estimates buy/sell split using candle structure heuristics; it does not access TradingView footprint data directly.

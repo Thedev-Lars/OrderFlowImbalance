@@ -9,7 +9,8 @@ levels = input.int(5, "Levels per Bar", minval=2, maxval=10, group=grp1)
 max_buckets_per_bar = input.int(8, "Max Buckets per Bar", minval=2, maxval=20, group=grp1)
 top_tick_window = input.int(20, "Bars for Top Ticks", minval=5, maxval=100, group=grp1)
 table_font_size = input.string("normal", "Table Font Size", options=["small", "normal", "large"], group=grp1)
-table_position = input.string("top_right", "Table Position", options=["top_right", "middle_right"], group=grp1)
+table_position = input.string("top_right", "Key/Top Table Position", options=["top_right", "middle_right", "middle_left"], group=grp1)
+flow_table_position = input.string("middle_right", "Order Flow Position", options=["middle_right", "bottom_right", "middle_left"], group=grp1)
 table_section_spacing = input.int(1, "Section Spacing Rows", minval=0, maxval=3, group=grp1)
 table_max_key_rows = input.int(8, "Max Key Level Rows", minval=3, maxval=15, group=grp1)
 table_max_top_rows = input.int(6, "Max Top Tick Rows", minval=3, maxval=12, group=grp1)
@@ -31,8 +32,8 @@ show_trades = input.bool(true, "Show Trade Markers", group=grp2b, tooltip="Plot 
 tp_rr1 = input.float(1.0, "TP1 Reward:Risk", minval=0.5, maxval=3.0, step=0.25, group=grp2b)
 tp_rr2 = input.float(2.0, "TP2 Reward:Risk", minval=1.0, maxval=6.0, step=0.25, group=grp2b)
 entry_offset_ticks = input.float(0.0, "Entry Offset (ticks)", minval=0.0, maxval=20.0, step=0.5, group=grp2b)
-stop_offset_ticks = input.float(1.0, "Stop Offset (ticks)", minval=0.5, maxval=50.0, step=0.5, group=grp2b)
-tp_mode = input.string("Fixed R:R", "TP Mode", options=["Fixed R:R", "Opposing Level"], group=grp2b, tooltip="Use R multiples or nearest opposing imbalance for targets")
+stop_offset_ticks = input.float(6.0, "Stop Offset (ticks)", minval=0.5, maxval=50.0, step=0.5, group=grp2b)
+tp_mode = input.string("Opposing Level", "TP Mode", options=["Fixed R:R", "Opposing Level"], group=grp2b, tooltip="Use R multiples or nearest opposing imbalance for targets")
 
 grp3 = "Colors"
 col_buy = input.color(#00ff41, "Buy (Green)", group=grp3)
@@ -385,8 +386,8 @@ if array.size(ob_boxes) > 0
 
                     if filled or expired
                         array.set(ob_active, i, false)
-                        box.set_bgcolor(array.get(ob_boxes, i), color.new(color.gray, 90))
-                        box.set_border_color(array.get(ob_boxes, i), color.new(color.gray, 70))
+                        box.set_bgcolor(array.get(ob_boxes, i), color.new(color.gray, 95))
+                        box.set_border_color(array.get(ob_boxes, i), color.new(color.gray, 85))
                         box.set_right(array.get(ob_boxes, i), bar_index)
                         label.delete(array.get(ob_labels, i))
                         if show_trades
@@ -437,16 +438,16 @@ if array.size(ob_boxes) > 0
                         // Create or refresh trade markers after a retest
                         if show_trades
                             entry_price = side == "buy" ? bot_price + (entry_offset_ticks * syminfo.mintick) : top_price - (entry_offset_ticks * syminfo.mintick)
-                            stop_price = side == "buy" ? bot_price - (stop_offset_ticks * syminfo.mintick) : top_price + (stop_offset_ticks * syminfo.mintick)
+                            fixed_stop_ticks = 6.0
+                            stop_price = side == "buy" ? bot_price - (fixed_stop_ticks * syminfo.mintick) : top_price + (fixed_stop_ticks * syminfo.mintick)
                             risk = math.max(math.abs(entry_price - stop_price), syminfo.mintick)
 
                             float tp1 = na
                             float tp2 = na
-                            if tp_mode == "Opposing Level"
-                                opp = nearest_opposing_price(side, entry_price)
-                                if not na(opp)
-                                    tp1 := opp
-                                    tp2 := opp
+                            opp = nearest_opposing_price(side, entry_price)
+                            if not na(opp)
+                                tp1 := opp
+                                tp2 := opp
                             if na(tp1)
                                 tp1 := target_from_rr(side, entry_price, risk, tp_rr1)
                                 tp2 := target_from_rr(side, entry_price, risk, tp_rr2)
@@ -592,10 +593,15 @@ base_size = tbl_size(table_font_size)
 header_size = table_font_size == "large" ? size.large : size.normal
 sub_size = table_font_size == "small" ? size.small : size.tiny
 
-// Allow taller tables to fit padding rows and section dividers
-table_rows = 80
-tbl_pos = table_position == "top_right" ? position.top_right : position.middle_right
-var table main_tbl = table.new(tbl_pos, 8, table_rows, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
+// Main table (Key Levels + Top Ticks) kept compact; flow table separated to reduce height
+main_rows = 4 + table_max_key_rows + table_max_top_rows + (table_section_spacing * 4)
+main_rows := math.max(main_rows, 24)
+flow_rows = 6 + (lookback * (max_buckets_per_bar + 2))
+flow_rows := math.min(flow_rows, 70)
+tbl_pos = table_position == "top_right" ? position.top_right : (table_position == "middle_left" ? position.middle_left : position.middle_right)
+flow_pos = flow_table_position == "middle_left" ? position.middle_left : (flow_table_position == "bottom_right" ? position.bottom_right : position.middle_right)
+var table main_tbl = table.new(tbl_pos, 8, main_rows, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
+var table flow_tbl = table.new(flow_pos, 7, flow_rows, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
 
 // Scratch arrays for clustered order flow (per bar)
 var float[] cluster_low = array.new_float()
@@ -643,19 +649,19 @@ if barstate.islast and show_table
         array.push(cluster_is_buy, false)
         array.push(cluster_bar, b)
 
-        if volume[b] > 0 and (high[b] - low[b]) > 0
-            rng = high[b] - low[b]
-            bucket = math.max(atr14[b] / levels, syminfo.mintick)
-            bucket_count = math.max(1, math.ceil(rng / bucket))
-            bucket_count := math.min(bucket_count, max_buckets_per_bar)
+            if volume[b] > 0 and (high[b] - low[b]) > 0
+                rng = high[b] - low[b]
+                bucket = math.max(atr14[b] / levels, syminfo.mintick)
+                bucket_count = math.max(1, math.ceil(rng / bucket))
+                bucket_count := math.min(bucket_count, max_buckets_per_bar)
 
-            var float[] tmp_low = array.new_float()
-            var float[] tmp_high = array.new_float()
-            var float[] tmp_buy = array.new_float()
-            var float[] tmp_sell = array.new_float()
-            var float[] tmp_ratio = array.new_float()
-            var float[] tmp_score = array.new_float()
-            var bool[] tmp_side = array.new_bool()
+                float[] tmp_low = array.new_float()
+                float[] tmp_high = array.new_float()
+                float[] tmp_buy = array.new_float()
+                float[] tmp_sell = array.new_float()
+                float[] tmp_ratio = array.new_float()
+                float[] tmp_score = array.new_float()
+                bool[] tmp_side = array.new_bool()
 
             for j = 0 to bucket_count - 1
                 lvl_bot = low[b] + (j * bucket)
@@ -677,11 +683,11 @@ if barstate.islast and show_table
                     array.push(tmp_score, score)
                     array.push(tmp_side, is_buy)
 
-            // Sort this bar's buckets by score so the strongest sit first
-            if array.size(tmp_score) > 1
-                for x = 0 to array.size(tmp_score) - 2
-                    for y = 0 to array.size(tmp_score) - x - 2
-                        if array.get(tmp_score, y + 1) > array.get(tmp_score, y)
+              // Sort this bar's buckets by score so the strongest sit first
+              if array.size(tmp_score) > 1
+                  for x = 0 to array.size(tmp_score) - 2
+                      for y = 0 to array.size(tmp_score) - x - 2
+                          if array.get(tmp_score, y + 1) > array.get(tmp_score, y)
                             tmp = array.get(tmp_score, y)
                             array.set(tmp_score, y, array.get(tmp_score, y + 1))
                             array.set(tmp_score, y + 1, tmp)
@@ -710,18 +716,19 @@ if barstate.islast and show_table
                             array.set(tmp_side, y, array.get(tmp_side, y + 1))
                             array.set(tmp_side, y + 1, tmpb)
 
-            // Push all buckets for this bar
-            for j = 0 to math.min(array.size(tmp_low) - 1, max_buckets_per_bar - 1)
-                array.push(cluster_kind, "bucket")
-                array.push(cluster_label, bar_label)
-                array.push(cluster_low, array.get(tmp_low, j))
-                array.push(cluster_high, array.get(tmp_high, j))
-                array.push(cluster_buy, array.get(tmp_buy, j))
-                array.push(cluster_sell, array.get(tmp_sell, j))
-                array.push(cluster_ratio, array.get(tmp_ratio, j))
-                array.push(cluster_score, array.get(tmp_score, j))
-                array.push(cluster_is_buy, array.get(tmp_side, j))
-                array.push(cluster_bar, b)
+              // Push all buckets for this bar
+              if array.size(tmp_low) > 0
+                  for j = 0 to math.min(array.size(tmp_low) - 1, max_buckets_per_bar - 1)
+                      array.push(cluster_kind, "bucket")
+                      array.push(cluster_label, bar_label)
+                      array.push(cluster_low, array.get(tmp_low, j))
+                      array.push(cluster_high, array.get(tmp_high, j))
+                      array.push(cluster_buy, array.get(tmp_buy, j))
+                      array.push(cluster_sell, array.get(tmp_sell, j))
+                      array.push(cluster_ratio, array.get(tmp_ratio, j))
+                      array.push(cluster_score, array.get(tmp_score, j))
+                      array.push(cluster_is_buy, array.get(tmp_side, j))
+                      array.push(cluster_bar, b)
 
     // ========== KEY LEVELS SECTION (persistent) ==========
     row_idx = 0
@@ -732,7 +739,7 @@ if barstate.islast and show_table
     // Optional divider/buffer rows for breathing room
     spacer = table_compact ? 0 : table_section_spacing
     for _ = 0 to spacer - 1
-        if row_idx < table_rows
+        if row_idx < main_rows
             table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
             table.cell(main_tbl, 0, row_idx, "──────", text_color=color.new(color.gray, 20), text_size=sub_size, bgcolor=color.new(color.black, 90))
             row_idx += 1
@@ -746,7 +753,7 @@ if barstate.islast and show_table
     max_key_rows = table_max_key_rows
     if array.size(hist_prices) > 0
         for i = array.size(hist_prices) - 1 to 0
-            if row_idx >= table_rows or row_idx - spacer >= max_key_rows + 1
+            if row_idx >= main_rows or row_idx - spacer >= max_key_rows + 1
                 break
 
             ratio = array.get(hist_ratios, i)
@@ -782,7 +789,7 @@ if barstate.islast and show_table
                 table.cell(main_tbl, 7, row_idx, is_buy ? "BUY" : "SELL", text_color=side_col, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
                 row_idx += 1
 
-    while row_idx - spacer < max_key_rows + 1 and row_idx < table_rows
+    while row_idx - spacer < max_key_rows + 1 and row_idx < main_rows
         filler_bg = color.new(color.gray, 90)
         table.cell(main_tbl, 0, row_idx, "", bgcolor=filler_bg)
         table.cell(main_tbl, 1, row_idx, "", bgcolor=filler_bg)
@@ -797,18 +804,18 @@ if barstate.islast and show_table
     // Breathing room before next section
     spacer_rows = table_compact ? 0 : table_section_spacing
     for _ = 0 to spacer_rows - 1
-        if row_idx < table_rows
+        if row_idx < main_rows
             table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
             table.cell(main_tbl, 0, row_idx, "", bgcolor=color.new(color.black, 85))
             row_idx += 1
 
     // ========== TOP VOLUME TICKS (rolling window) ==========
-    if row_idx < table_rows
+    if row_idx < main_rows
         table.cell(main_tbl, 0, row_idx, "TOP TICKS", text_color=color.black, text_size=header_size, bgcolor=color.new(col_accent, 0), text_halign=text.align_left)
         table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
         row_idx += 1
 
-    if not table_compact and row_idx < table_rows
+    if not table_compact and row_idx < main_rows
         table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
         table.cell(main_tbl, 0, row_idx, "──────", text_color=color.new(color.gray, 20), text_size=sub_size, bgcolor=color.new(color.black, 90))
         row_idx += 1
@@ -865,7 +872,7 @@ if barstate.islast and show_table
                     array.set(tick_sides, y + 1, tmp_side)
 
     for i = 0 to table_max_top_rows - 1
-        if row_idx >= table_rows
+        if row_idx >= main_rows
             break
         if i < array.size(tick_prices)
             side = array.get(tick_sides, i)
@@ -883,24 +890,24 @@ if barstate.islast and show_table
 
     spacer_rows := table_compact ? 0 : table_section_spacing
     for _ = 0 to spacer_rows - 1
-        if row_idx < table_rows
+        if row_idx < main_rows
             table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
             table.cell(main_tbl, 0, row_idx, "", bgcolor=color.new(color.black, 85))
             row_idx += 1
 
     // ========== ORDER FLOW CLUSTERS ==========
-    if row_idx < table_rows
+    if row_idx < main_rows
         table.cell(main_tbl, 0, row_idx, "ORDER FLOW CLUSTERS", text_color=color.black, text_size=header_size, bgcolor=color.new(col_accent, 0), text_halign=text.align_left)
         table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
         row_idx += 1
 
-    if not table_compact and row_idx < table_rows
+    if not table_compact and row_idx < main_rows
         table.merge_cells(main_tbl, 0, row_idx, 7, row_idx)
         table.cell(main_tbl, 0, row_idx, "──────", text_color=color.new(color.gray, 20), text_size=sub_size, bgcolor=color.new(color.black, 90))
         row_idx += 1
 
     for i = 0 to array.size(cluster_kind) - 1
-        if row_idx >= table_rows
+        if row_idx >= main_rows
             break
         kind = array.get(cluster_kind, i)
         if kind == "header"
@@ -929,7 +936,7 @@ if barstate.islast and show_table
             table.cell(main_tbl, 7, row_idx, is_buy ? "BUY" : "SELL", text_color=is_buy ? col_buy : col_sell, text_size=base_size, bgcolor=bg, text_halign=text.align_left)
             row_idx += 1
 
-    while row_idx < table_rows
+    while row_idx < main_rows
         table.cell(main_tbl, 0, row_idx, "", bgcolor=color.new(color.gray, 92))
         table.cell(main_tbl, 1, row_idx, "", bgcolor=color.new(color.gray, 92))
         table.cell(main_tbl, 2, row_idx, "", bgcolor=color.new(color.gray, 92))
