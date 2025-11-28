@@ -104,7 +104,7 @@ active_meta(float price) =>
     near_block = false
     near_stacked = false
     near_retest = false
-    near_strength = na
+    float near_strength = na
     near_side = ""
     if array.size(ob_active) > 0
         for i = 0 to array.size(ob_active) - 1
