@@ -781,14 +781,21 @@ if array.size(trade_state) > 0
             float poc = array.get(kl_poc, i)
 
             if ts == TE_STATE_ACTIVE
-                bool broke_zone = side == "buy" ? (high < range_bottom and high < poc) : (low > range_top and low > poc)
+                bool broke_zone = side == "buy" ? (low < range_bottom and high < poc) : (high > range_top and low > poc)
                 if broke_zone
                     array.set(trade_state, i, TE_STATE_REJECTED)
+                    if i < array.size(kl_state)
+                        array.set(kl_state, i, STATE_REJECTED)
+                        array.set(kl_outcome, i, "Rejected")
+                        array.set(kl_realized_ticks, i, na)
 
             if ts == TE_STATE_POSSIBLE and not na(entry)
                 bool touched_entry = (low <= entry) and (high >= entry)
                 if touched_entry
                     array.set(trade_state, i, TE_STATE_OPEN)
+                    if i < array.size(kl_state)
+                        array.set(kl_state, i, STATE_TESTING)
+                        array.set(kl_last_test_bar, i, bar_index)
 
             ts := array.get(trade_state, i)
 
@@ -797,13 +804,23 @@ if array.size(trade_state) > 0
                 bool hit_stop = side == "buy" ? (not na(stop) and low <= stop) : (not na(stop) and high >= stop)
 
                 if hit_target
-                    float ticks_val = (target - entry) / syminfo.mintick
+                    float ticks_val = side == "buy" ? (target - entry) / syminfo.mintick : (entry - target) / syminfo.mintick
                     array.set(trade_ticks, i, ticks_val)
                     array.set(trade_state, i, TE_STATE_CLOSED_WIN)
+                    if i < array.size(kl_state)
+                        array.set(kl_realized_ticks, i, ticks_val)
+                        array.set(kl_outcome, i, "Profit")
+                        array.set(kl_state, i, STATE_CLOSED)
+                        array.set(kl_last_test_bar, i, bar_index)
                 else if hit_stop
-                    float ticks_val = (entry - stop) / syminfo.mintick
+                    float ticks_val = side == "buy" ? -((entry - stop) / syminfo.mintick) : -((stop - entry) / syminfo.mintick)
                     array.set(trade_ticks, i, ticks_val)
                     array.set(trade_state, i, TE_STATE_CLOSED_LOSS)
+                    if i < array.size(kl_state)
+                        array.set(kl_realized_ticks, i, ticks_val)
+                        array.set(kl_outcome, i, "Loss")
+                        array.set(kl_state, i, STATE_CLOSED)
+                        array.set(kl_last_test_bar, i, bar_index)
 
 // ============================================================================
 // RENDERING - BOXES AND TRADE LINES
