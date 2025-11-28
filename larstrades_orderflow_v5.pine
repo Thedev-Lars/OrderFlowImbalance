@@ -63,6 +63,16 @@ var label[] ob_trade_tp1 = array.new_label()
 var label[] ob_trade_tp2 = array.new_label()
 var label[] ob_trade_stop = array.new_label()
 
+// Persistent imbalance history for session memory
+hist_max = 500
+var float[] hist_prices = array.new_float()
+var float[] hist_buys = array.new_float()
+var float[] hist_sells = array.new_float()
+var float[] hist_ratios = array.new_float()
+var bool[] hist_is_buy = array.new_bool()
+var float[] hist_scores = array.new_float()
+var int[] hist_bars = array.new_int()
+
 // ==================== AGGRESSIVE RATIO CALCULATION ====================
 calc_level_ratio(float lvl_mid, float h, float l, float o, float c, float v, float rng) =>
     body = math.abs(c - o)
@@ -439,7 +449,8 @@ if barstate.isconfirmed
         alert(filled_block_message, alert.freq_once_per_bar_close)
 
 // ==================== TABLES ====================
-var table main_tbl = table.new(position.middle_right, 8, 26, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
+table_rows = 26
+var table main_tbl = table.new(position.middle_right, 8, table_rows, bgcolor=color.new(color.black, 10), frame_color=col_accent, frame_width=2, border_width=1, border_color=color.new(color.gray, 60))
 
 // Scratch arrays for clustered order flow (per bar)
 var float[] cluster_low = array.new_float()
@@ -535,14 +546,32 @@ if barstate.islast and show_table
                 same_bar = array.get(cluster_bar, y) == array.get(cluster_bar, y + 1)
                 stronger = array.get(cluster_score, y + 1) > array.get(cluster_score, y)
                 if newer or (same_bar and stronger)
-                    array.swap(cluster_low, y, y + 1)
-                    array.swap(cluster_high, y, y + 1)
-                    array.swap(cluster_buy, y, y + 1)
-                    array.swap(cluster_sell, y, y + 1)
-                    array.swap(cluster_ratio, y, y + 1)
-                    array.swap(cluster_score, y, y + 1)
-                    array.swap(cluster_is_buy, y, y + 1)
-                    array.swap(cluster_bar, y, y + 1)
+                    tmp_low = array.get(cluster_low, y)
+                    tmp_high = array.get(cluster_high, y)
+                    tmp_buy = array.get(cluster_buy, y)
+                    tmp_sell = array.get(cluster_sell, y)
+                    tmp_ratio = array.get(cluster_ratio, y)
+                    tmp_score = array.get(cluster_score, y)
+                    tmp_side = array.get(cluster_is_buy, y)
+                    tmp_bar = array.get(cluster_bar, y)
+
+                    array.set(cluster_low, y, array.get(cluster_low, y + 1))
+                    array.set(cluster_high, y, array.get(cluster_high, y + 1))
+                    array.set(cluster_buy, y, array.get(cluster_buy, y + 1))
+                    array.set(cluster_sell, y, array.get(cluster_sell, y + 1))
+                    array.set(cluster_ratio, y, array.get(cluster_ratio, y + 1))
+                    array.set(cluster_score, y, array.get(cluster_score, y + 1))
+                    array.set(cluster_is_buy, y, array.get(cluster_is_buy, y + 1))
+                    array.set(cluster_bar, y, array.get(cluster_bar, y + 1))
+
+                    array.set(cluster_low, y + 1, tmp_low)
+                    array.set(cluster_high, y + 1, tmp_high)
+                    array.set(cluster_buy, y + 1, tmp_buy)
+                    array.set(cluster_sell, y + 1, tmp_sell)
+                    array.set(cluster_ratio, y + 1, tmp_ratio)
+                    array.set(cluster_score, y + 1, tmp_score)
+                    array.set(cluster_is_buy, y + 1, tmp_side)
+                    array.set(cluster_bar, y + 1, tmp_bar)
 
     // ========== KEY LEVELS SECTION (persistent) ==========
     table.cell(main_tbl, 0, 0, "⚡ KEY LEVELS", text_color=col_accent, text_size=size.normal, bgcolor=color.new(color.black, 0))
@@ -613,9 +642,17 @@ if barstate.islast and show_table
         for x = 0 to array.size(tick_vols) - 2
             for y = 0 to array.size(tick_vols) - x - 2
                 if array.get(tick_vols, y + 1) > array.get(tick_vols, y)
-                    array.swap(tick_vols, y, y + 1)
-                    array.swap(tick_prices, y, y + 1)
-                    array.swap(tick_sides, y, y + 1)
+                    tmp_vol = array.get(tick_vols, y)
+                    tmp_price = array.get(tick_prices, y)
+                    tmp_side = array.get(tick_sides, y)
+
+                    array.set(tick_vols, y, array.get(tick_vols, y + 1))
+                    array.set(tick_prices, y, array.get(tick_prices, y + 1))
+                    array.set(tick_sides, y, array.get(tick_sides, y + 1))
+
+                    array.set(tick_vols, y + 1, tmp_vol)
+                    array.set(tick_prices, y + 1, tmp_price)
+                    array.set(tick_sides, y + 1, tmp_side)
 
     top_rows = 5
     for i = 0 to top_rows - 1
@@ -670,7 +707,7 @@ if barstate.islast and show_table
         table.cell(main_tbl, 7, row, is_buy ? "BUY" : "SELL", text_color=is_buy ? col_buy : col_sell, text_size=size.tiny, bgcolor=bg)
         row += 1
 
-    while row < table.height(main_tbl)
+    while row < table_rows
         table.cell(main_tbl, 0, row, "", bgcolor=color.new(color.gray, 90))
         table.cell(main_tbl, 1, row, "", bgcolor=color.new(color.gray, 90))
         table.cell(main_tbl, 2, row, "", bgcolor=color.new(color.gray, 90))
