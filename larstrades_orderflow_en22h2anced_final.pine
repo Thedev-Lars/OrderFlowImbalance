@@ -36,6 +36,7 @@ atrMult      = input.float(0.5,  "ATR Multiplier",            minval=0.0, step=0
 minStopTicks = input.float(25.0, "Min Stop Size (Ticks)",     minval=1.0, step=1.0,  group="Trade Logic")
 maxStopTicks = input.float(80.0, "Max Stop Size (Ticks)",     minval=5.0, step=1.0,  group="Trade Logic")
 swingLookback = input.int(10, "Swing Lookback Bars", minval=1, maxval=100, group="Trade Logic")
+showDebug = input.bool(false, "Dev: Show Stop/Target Debug", group = "Trade Logic")
 
 // ----------------------------------------------------------------------------
 // Trade Filter Settings
@@ -197,6 +198,12 @@ var array<float> kl_realized_ticks = array.new<float>()
 var array<bool> kl_closed_logged = array.new<bool>()
 var array<int> trade_entry_bar = array.new<int>()
 
+// Dev debug overlay objects
+var line debugEntryLine = na
+var line debugStopLine = na
+var line debugTargetLine = na
+var label debugLabel = na
+
 // Persistent storage for closed trades (per session)
 var array<string> closed_side = array.new<string>()
 var array<float> closed_entry = array.new<float>()
@@ -338,6 +345,20 @@ find_next_target(int current_idx, string current_side) =>
                         target := poc
 
     target
+
+clear_debug_drawings() =>
+    if not na(debugEntryLine)
+        line.delete(debugEntryLine)
+        debugEntryLine := na
+    if not na(debugStopLine)
+        line.delete(debugStopLine)
+        debugStopLine := na
+    if not na(debugTargetLine)
+        line.delete(debugTargetLine)
+        debugTargetLine := na
+    if not na(debugLabel)
+        label.delete(debugLabel)
+        debugLabel := na
 
 // ============================================================================
 // IMBALANCE DETECTION
@@ -919,6 +940,68 @@ if array.size(trade_state) > 0
                     array.set(trade_ticks, i, ticks_val)
                     array.set(trade_state, i, TE_STATE_CLOSED_LOSS)
                     finalize_close(i, "Loss", ticks_val)
+
+// ---------------------------------------------------------------------------
+// Dev debug overlay for the most recent trade candidate
+if barstate.islast
+    if showDebug and array.size(trade_state) > 0
+        int latest_idx = na
+        for idx = array.size(trade_state) - 1 to 0
+            int ts = array.get(trade_state, idx)
+            if ts == TE_STATE_POSSIBLE or ts == TE_STATE_OPEN
+                latest_idx := idx
+                break
+
+        if not na(latest_idx) and latest_idx < array.size(kl_entry_price) and latest_idx < array.size(kl_stop_price) and latest_idx < array.size(kl_target_price) and latest_idx < array.size(kl_rr_ratio) and latest_idx < array.size(kl_side)
+            float entry = array.get(kl_entry_price, latest_idx)
+            float stop = array.get(kl_stop_price, latest_idx)
+            float target = array.get(kl_target_price, latest_idx)
+            float rr = array.get(kl_rr_ratio, latest_idx)
+
+            if not na(entry) and not na(stop) and not na(target) and not na(rr)
+                float x1 = bar_index - 1
+                float x2 = bar_index
+
+                if na(debugEntryLine)
+                    debugEntryLine := line.new(x1, entry, x2, entry, color=color.new(color.silver, 40), width=1, style=line.style_solid)
+                else
+                    line.set_xy1(debugEntryLine, x1, entry)
+                    line.set_xy2(debugEntryLine, x2, entry)
+                    line.set_color(debugEntryLine, color.new(color.silver, 40))
+
+                if na(debugStopLine)
+                    debugStopLine := line.new(x1, stop, x2, stop, color=color.new(col_stop, 20), width=1, style=line.style_solid)
+                else
+                    line.set_xy1(debugStopLine, x1, stop)
+                    line.set_xy2(debugStopLine, x2, stop)
+                    line.set_color(debugStopLine, color.new(col_stop, 20))
+
+                if na(debugTargetLine)
+                    debugTargetLine := line.new(x1, target, x2, target, color=color.new(col_target, 20), width=1, style=line.style_solid)
+                else
+                    line.set_xy1(debugTargetLine, x1, target)
+                    line.set_xy2(debugTargetLine, x2, target)
+                    line.set_color(debugTargetLine, color.new(col_target, 20))
+
+                float riskTicks = math.round(math.abs(entry - stop) / syminfo.mintick * 10.0) / 10.0
+                float rrRounded = math.round(rr * 10.0) / 10.0
+                string side_val = array.get(kl_side, latest_idx)
+                float levelTarget = find_next_target(latest_idx, side_val)
+                string source = (not na(levelTarget) and math.abs(levelTarget - target) <= 0.5 * syminfo.mintick) ? "Level" : "Synthetic"
+
+                if na(debugLabel)
+                    debugLabel := label.new(bar_index, entry, "", color=color.new(color.gray, 85), textcolor=color.white, style=label.style_label_left, size=size.small)
+                else
+                    label.set_x(debugLabel, bar_index)
+                    label.set_y(debugLabel, entry)
+
+                label.set_text(debugLabel, "Risk: " + str.tostring(riskTicks) + "t\nRR: " + str.tostring(rrRounded) + " (" + source + ")")
+            else
+                clear_debug_drawings()
+        else
+            clear_debug_drawings()
+    else
+        clear_debug_drawings()
 
 // ============================================================================
 // RENDERING - BOXES AND TRADE LINES
