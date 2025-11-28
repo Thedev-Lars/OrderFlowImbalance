@@ -24,3 +24,4 @@ A TradingView Pine Script indicator that highlights intrabar order-flow imbalanc
 ## Notes
 - The script estimates buy/sell split using candle structure heuristics; it does not access TradingView footprint data directly.
 - Blocks fade when price trades through them, retests are highlighted, stacked blocks are emphasized, and stale unfilled blocks expire automatically after their configured lifespan. Top ticks and clustered order flow use real intra-bar buckets (not close-only proxies) to reflect true high-volume prices.
+- Placeholder variables that must start as `na` (e.g., opposing-price lookups or trade target placeholders) are explicitly typed as floats to avoid Pine's "Value with NA type" compiler errors.
