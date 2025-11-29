@@ -24,6 +24,7 @@ showBoxes = input.bool(true, "Show Imbalance Boxes", group="Display")
 showTradeLines = input.bool(true, "Show Trade Lines", group="Display")
 showClosedTradeBoxes = input.bool(true, "Show Closed Trade Boxes", group="Display")
 closedTradeBoxOpacity = input.int(75, "Closed Box Opacity", minval=10, maxval=95, group="Display")
+showTables = input.bool(true, "Show Tables", group="Display")
 mobileCompact = input.bool(false, "Mobile Compact Mode", group="Display")
 
 // Performance Controls
@@ -1249,9 +1250,22 @@ if array.size(closed_trade_boxes) > 0
         box.set_bgcolor(bx, box_col)
         box.set_border_color(bx, box_col)
 
+f_clear(tbl) =>
+    if table.is_valid(tbl)
+        table.clear(tbl, 0, 0, table.columns(tbl) - 1, table.rows(tbl) - 1)
+
 // ============================================================================
 // TABLES
 // ============================================================================
+
+if not showTables
+    f_clear(tbl_key)
+    f_clear(tbl_trades)
+    f_clear(tbl_flow)
+    f_clear(tbl_mobile)
+    f_clear(tbl_performance)
+    continue
+
 
 var table tbl_key = table.new(position=position.bottom_right, columns=9, rows=12, bgcolor=color.new(color.black, 80), border_width=1)
 // Reduce the trades table height to avoid overlap with the performance panel
