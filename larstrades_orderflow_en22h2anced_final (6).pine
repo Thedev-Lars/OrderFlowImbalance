@@ -26,6 +26,7 @@ showClosedTradeBoxes = input.bool(true, "Show Closed Trade Boxes", group="Displa
 closedTradeBoxOpacity = input.int(75, "Closed Box Opacity", minval=10, maxval=95, group="Display")
 showTables = input.bool(true, "Show Tables", group="Display")
 mobileCompact = input.bool(false, "Mobile Compact Mode", group="Display")
+showTradeVisuals = input.bool(true, "Show On-Chart Trade Visuals", group="Display")
 
 // Performance Controls
 resetPerformance = input.bool(false, "Reset Performance", group="Performance")
@@ -63,6 +64,11 @@ col_buy = input.color(#00ff41, "Buy Color", group="Colors")
 col_sell = input.color(#b968ff, "Sell Color", group="Colors")
 col_stop = input.color(#ff0000, "Stop Loss Color", group="Colors")
 col_target = input.color(#ffeb3b, "Take Profit Color", group="Colors")
+buyColor = color.new(color.lime, 0)
+sellColor = color.new(color.purple, 0)
+riskColor = color.new(color.red, 85)
+rewardColor = color.new(color.green, 85)
+neutralLine = color.new(color.yellow, 10)
 
 // ============================================================================
 // ORDER FLOW ENGINE
@@ -226,6 +232,10 @@ var float[] closed_trade_rr = array.new_float()
 var string[] closed_result = array.new_string()
 var box[] closed_trade_boxes = array.new_box()
 var int[] trade_closed_bar = array.new_int()
+var int[] trade_visual_ids = array.new_int()
+var line[] trade_visual_entry_lines = array.new_line()
+var box[] trade_visual_risk_boxes = array.new_box()
+var box[] trade_visual_reward_boxes = array.new_box()
 
 // Trade lifecycle state machine
 type Trade
@@ -261,6 +271,32 @@ clear_performance_history() =>
         for i = 0 to array.size(closed_trade_boxes) - 1
             box.delete(array.get(closed_trade_boxes, i))
     array.clear(closed_trade_boxes)
+
+find_trade_visual_index(int id) =>
+    int found = -1
+    for i = 0 to array.size(trade_visual_ids) - 1
+        if array.get(trade_visual_ids, i) == id
+            found := i
+            break
+    found
+
+clear_trade_visuals() =>
+    for i = 0 to array.size(trade_visual_entry_lines) - 1
+        line ln = array.get(trade_visual_entry_lines, i)
+        if not na(ln)
+            line.delete(ln)
+    for i = 0 to array.size(trade_visual_risk_boxes) - 1
+        box bx = array.get(trade_visual_risk_boxes, i)
+        if not na(bx)
+            box.delete(bx)
+    for i = 0 to array.size(trade_visual_reward_boxes) - 1
+        box bx = array.get(trade_visual_reward_boxes, i)
+        if not na(bx)
+            box.delete(bx)
+    array.clear(trade_visual_ids)
+    array.clear(trade_visual_entry_lines)
+    array.clear(trade_visual_risk_boxes)
+    array.clear(trade_visual_reward_boxes)
 
 if current_day != last_session_day
     if array.size(kl_box) > 0
@@ -313,6 +349,7 @@ if current_day != last_session_day
     array.clear(trades_open)
     array.clear(trades_closed)
     trade_seq := 0
+    clear_trade_visuals()
     clear_performance_history()
     last_session_day := current_day
 
@@ -434,6 +471,95 @@ remove_trades_for_index(int idx) =>
     remove_i := find_trade_index(trades_open, idx)
     if remove_i != -1
         array.remove(trades_open, remove_i)
+
+ensure_trade_visual(Trade t, string state_label) =>
+    bool has_prices = not na(t.entry) and not na(t.stop) and not na(t.take)
+    if not has_prices
+        return
+
+    int vis_idx = find_trade_visual_index(t.id)
+    if vis_idx == -1
+        line ln_new = line.new(bar_index, t.entry, bar_index + 1, t.entry, extend=extend.right, color=neutralLine, width=1, style=line.style_dotted)
+        float risk_top = math.max(t.entry, t.stop)
+        float risk_bottom = math.min(t.entry, t.stop)
+        float reward_top = math.max(t.entry, t.take)
+        float reward_bottom = math.min(t.entry, t.take)
+        box risk_box_new = box.new(bar_index, risk_top, bar_index + 1, risk_bottom, bgcolor=color.new(riskColor, 90), border_color=color.new(riskColor, 90), extend=extend.right)
+        box reward_box_new = box.new(bar_index, reward_top, bar_index + 1, reward_bottom, bgcolor=color.new(rewardColor, 90), border_color=color.new(rewardColor, 90), extend=extend.right)
+        array.push(trade_visual_ids, t.id)
+        array.push(trade_visual_entry_lines, ln_new)
+        array.push(trade_visual_risk_boxes, risk_box_new)
+        array.push(trade_visual_reward_boxes, reward_box_new)
+        vis_idx := array.size(trade_visual_ids) - 1
+
+    line ln = array.get(trade_visual_entry_lines, vis_idx)
+    box risk_box = array.get(trade_visual_risk_boxes, vis_idx)
+    box reward_box = array.get(trade_visual_reward_boxes, vis_idx)
+
+    if na(ln)
+        ln := line.new(bar_index, t.entry, bar_index + 1, t.entry, extend=extend.right, color=neutralLine, width=1, style=line.style_dotted)
+        array.set(trade_visual_entry_lines, vis_idx, ln)
+    if na(risk_box)
+        float risk_top = math.max(t.entry, t.stop)
+        float risk_bottom = math.min(t.entry, t.stop)
+        risk_box := box.new(bar_index, risk_top, bar_index + 1, risk_bottom, bgcolor=color.new(riskColor, 90), border_color=color.new(riskColor, 90), extend=extend.right)
+        array.set(trade_visual_risk_boxes, vis_idx, risk_box)
+    if na(reward_box)
+        float reward_top = math.max(t.entry, t.take)
+        float reward_bottom = math.min(t.entry, t.take)
+        reward_box := box.new(bar_index, reward_top, bar_index + 1, reward_bottom, bgcolor=color.new(rewardColor, 90), border_color=color.new(rewardColor, 90), extend=extend.right)
+        array.set(trade_visual_reward_boxes, vis_idx, reward_box)
+
+    line.set_extend(ln, extend.right)
+    line.set_y1(ln, t.entry)
+    line.set_y2(ln, t.entry)
+
+    float risk_top_now = math.max(t.entry, t.stop)
+    float risk_bottom_now = math.min(t.entry, t.stop)
+    float reward_top_now = math.max(t.entry, t.take)
+    float reward_bottom_now = math.min(t.entry, t.take)
+
+    box.set_extend(risk_box, extend.right)
+    box.set_top(risk_box, risk_top_now)
+    box.set_bottom(risk_box, risk_bottom_now)
+    box.set_extend(reward_box, extend.right)
+    box.set_top(reward_box, reward_top_now)
+    box.set_bottom(reward_box, reward_bottom_now)
+
+    color line_col = neutralLine
+    line_style line_style_val = line.style_dotted
+    int line_w = 1
+    color risk_bg = color.new(riskColor, 90)
+    color reward_bg = color.new(rewardColor, 90)
+    color risk_border = color.new(riskColor, 90)
+    color reward_border = color.new(rewardColor, 90)
+
+    if state_label == "open"
+        line_col := t.direction == 1 ? buyColor : sellColor
+        line_style_val := line.style_solid
+        line_w := 2
+        risk_bg := color.new(riskColor, 80)
+        reward_bg := color.new(rewardColor, 80)
+        risk_border := color.new(riskColor, 75)
+        reward_border := color.new(rewardColor, 75)
+    else if state_label == "closed"
+        bool is_win = t.pnlTicks > 0
+        line_col := color.new(t.direction == 1 ? buyColor : sellColor, 70)
+        line_style_val := line.style_solid
+        line_w := 1
+        risk_bg := color.new(riskColor, 95)
+        reward_bg := color.new(rewardColor, 95)
+        risk_border := is_win ? color.new(riskColor, 95) : color.new(color.red, 20)
+        reward_border := is_win ? color.new(color.green, 20) : color.new(rewardColor, 95)
+
+    line.set_color(ln, line_col)
+    line.set_style(ln, line_style_val)
+    line.set_width(ln, line_w)
+
+    box.set_bgcolor(risk_box, risk_bg)
+    box.set_border_color(risk_box, risk_border)
+    box.set_bgcolor(reward_box, reward_bg)
+    box.set_border_color(reward_box, reward_border)
 
 register_set_trade(int kl_idx) =>
     if kl_idx >= 0 and kl_idx < array.size(kl_entry_price)
@@ -1322,6 +1448,22 @@ if array.size(closed_trade_boxes) > 0
         color box_col = showClosedTradeBoxes ? color.new(color.white, closedTradeBoxOpacity) : hidden_col
         box.set_bgcolor(bx, box_col)
         box.set_border_color(bx, box_col)
+
+// Trade visuals based on lifecycle arrays
+if not showTradeVisuals
+    clear_trade_visuals()
+else
+    for i = 0 to array.size(trades_set) - 1
+        Trade t = array.get(trades_set, i)
+        ensure_trade_visual(t, "set")
+
+    for i = 0 to array.size(trades_open) - 1
+        Trade t = array.get(trades_open, i)
+        ensure_trade_visual(t, "open")
+
+    for i = 0 to array.size(trades_closed) - 1
+        Trade t = array.get(trades_closed, i)
+        ensure_trade_visual(t, "closed")
 
 f_clear(tbl) =>
     if table.is_valid(tbl)
