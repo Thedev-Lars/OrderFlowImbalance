@@ -1268,11 +1268,12 @@ if not showTables
 
 
 var table tbl_key = table.new(position=position.bottom_right, columns=9, rows=12, bgcolor=color.new(color.black, 80), border_width=1)
+// Mobile-first ordering so the lightest tables reserve space before heavier layouts
+var table tbl_mobile = table.new(position=mobileCompact ? position.bottom_center : position.bottom_center, columns=mobileCompact ? 3 : 4, rows=mobileCompact ? 8 : 16, bgcolor=color.new(color.black, 80), border_width=1)
 // Reduce the trades table height to avoid overlap with the performance panel
-var table tbl_trades = table.new(position=mobileCompact ? position.bottom_center : position.top_left, columns=mobileCompact ? 4 : 7, rows=mobileCompact ? 12 : 16, bgcolor=color.new(color.black, 80), border_width=1)
-var table tbl_flow = table.new(position=position.top_right, columns=mobileCompact ? 4 : 12, rows=mobileCompact ? 10 : 22, bgcolor=color.new(color.black, 80), border_width=1)
-var table tbl_mobile = table.new(position=position.bottom_center, columns=4, rows=16, bgcolor=color.new(color.black, 80), border_width=1)
-var table tbl_performance = table.new(position=position.bottom_left, columns=6, rows=20, bgcolor=color.new(color.black, 80), border_width=1)
+var table tbl_trades = table.new(position=mobileCompact ? position.bottom_left : position.top_left, columns=mobileCompact ? 3 : 7, rows=mobileCompact ? 10 : 16, bgcolor=color.new(color.black, 80), border_width=1)
+var table tbl_performance = table.new(position=mobileCompact ? position.bottom_right : position.bottom_left, columns=mobileCompact ? 4 : 6, rows=mobileCompact ? 12 : 20, bgcolor=color.new(color.black, 80), border_width=1)
+var table tbl_flow = table.new(position=mobileCompact ? position.top_center : position.top_right, columns=mobileCompact ? 3 : 12, rows=mobileCompact ? 12 : 22, bgcolor=color.new(color.black, 80), border_width=1)
 
 float closed_r_total = 0.0
 int closed_r_trades = 0
