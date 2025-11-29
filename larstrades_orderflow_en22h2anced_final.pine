@@ -1344,7 +1344,8 @@ if barstate.islast and mobileCompact
     string open_entry = "-"
     string open_target = "-"
     string open_status = "-"
-    for idx = 0 to array.size(kl_state) - 1
+    for idx_offset = 0 to array.size(kl_state) - 1
+        int idx = array.size(kl_state) - 1 - idx_offset
         if open_side == "-" and array.get(kl_state, idx) == STATE_TESTING
             string s_side = array.get(kl_side, idx)
             float e_entry = array.get(kl_entry_price, idx)
@@ -1368,7 +1369,8 @@ if barstate.islast and mobileCompact
     table.cell(tbl_mobile, 0, 4, "Next Setup", text_color=color.white, text_size=size.small, bgcolor=section_bg)
     table.merge_cells(tbl_mobile, 0, 4, 3, 4)
     string setup_text = "-"
-    for idx = 0 to array.size(kl_state) - 1
+    for idx_offset = 0 to array.size(kl_state) - 1
+        int idx = array.size(kl_state) - 1 - idx_offset
         if setup_text == "-" and array.get(kl_state, idx) == STATE_ENTRY
             string s_side = array.get(kl_side, idx)
             float e_entry = array.get(kl_entry_price, idx)
