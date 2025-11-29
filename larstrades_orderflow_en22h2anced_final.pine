@@ -1594,10 +1594,12 @@ if barstate.islast and not mobileCompact
     t_row += 1
 
     int max_c = 8
+    int trades_rows = mobileCompact ? 18 : 28
+    int last_trade_row = trades_rows - 1
     int closed_count = array.size(closed_side)
     if closed_count > 0
         for idx = 0 to closed_count - 1
-            if t_row < 28
+            if t_row < trades_rows
                 string s_side3 = array.get(closed_side, idx)
                 float e_entry3 = array.get(closed_entry, idx)
                 float e_stop3 = array.get(closed_stop, idx)
@@ -1618,7 +1620,9 @@ if barstate.islast and not mobileCompact
                 table.cell(tbl_trades, 5, t_row, ticks_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
                 table.cell(tbl_trades, 6, t_row, result_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
                 t_row += 1
-    for r = t_row to math.min(27, t_row + max_c)
+    int fill_start_row = math.min(t_row, last_trade_row)
+    int fill_end_row = math.min(last_trade_row, t_row + max_c)
+    for r = fill_start_row to fill_end_row
         for col = 0 to 6
             table.cell(tbl_trades, col, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
     
