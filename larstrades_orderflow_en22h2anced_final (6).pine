@@ -289,10 +289,11 @@ clear_performance_history() =>
 
 find_trade_visual_index(int id) =>
     int found = -1
-    for i = 0 to array.size(trade_visual_ids) - 1
-        if array.get(trade_visual_ids, i) == id
-            found := i
-            break
+    if array.size(trade_visual_ids) > 0
+        for i = 0 to array.size(trade_visual_ids) - 1
+            if array.get(trade_visual_ids, i) == id
+                found := i
+                break
     found
 
 clear_trade_visuals() =>
@@ -446,11 +447,12 @@ finalize_close(int idx, string outcome, float ticks_val) =>
 
 find_trade_index(Trade[] arr, int kl_idx) =>
     int found = -1
-    for i = 0 to array.size(arr) - 1
-        Trade t = array.get(arr, i)
-        if t.kl_id == kl_idx
-            found := i
-            break
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            Trade t = array.get(arr, i)
+            if t.kl_id == kl_idx
+                found := i
+                break
     found
 
 log_timeline(string event, string dir, float entry, float stop, float take, float pnlTicks, float rr) =>
@@ -459,34 +461,37 @@ log_timeline(string event, string dir, float entry, float stop, float take, floa
 
 swap_trade_indices(int a, int b) =>
     Trade[] arr_ref = trades_set
-    for i = 0 to array.size(arr_ref) - 1
-        Trade t = array.get(arr_ref, i)
-        if t.kl_id == a
-            t.kl_id := b
-            array.set(arr_ref, i, t)
-        else if t.kl_id == b
-            t.kl_id := a
-            array.set(arr_ref, i, t)
+    if array.size(arr_ref) > 0
+        for i = 0 to array.size(arr_ref) - 1
+            Trade t = array.get(arr_ref, i)
+            if t.kl_id == a
+                t.kl_id := b
+                array.set(arr_ref, i, t)
+            else if t.kl_id == b
+                t.kl_id := a
+                array.set(arr_ref, i, t)
 
     arr_ref := trades_open
-    for i = 0 to array.size(arr_ref) - 1
-        Trade t = array.get(arr_ref, i)
-        if t.kl_id == a
-            t.kl_id := b
-            array.set(arr_ref, i, t)
-        else if t.kl_id == b
-            t.kl_id := a
-            array.set(arr_ref, i, t)
+    if array.size(arr_ref) > 0
+        for i = 0 to array.size(arr_ref) - 1
+            Trade t = array.get(arr_ref, i)
+            if t.kl_id == a
+                t.kl_id := b
+                array.set(arr_ref, i, t)
+            else if t.kl_id == b
+                t.kl_id := a
+                array.set(arr_ref, i, t)
 
     arr_ref := trades_closed
-    for i = 0 to array.size(arr_ref) - 1
-        Trade t = array.get(arr_ref, i)
-        if t.kl_id == a
-            t.kl_id := b
-            array.set(arr_ref, i, t)
-        else if t.kl_id == b
-            t.kl_id := a
-            array.set(arr_ref, i, t)
+    if array.size(arr_ref) > 0
+        for i = 0 to array.size(arr_ref) - 1
+            Trade t = array.get(arr_ref, i)
+            if t.kl_id == a
+                t.kl_id := b
+                array.set(arr_ref, i, t)
+            else if t.kl_id == b
+                t.kl_id := a
+                array.set(arr_ref, i, t)
 
 remove_trades_for_index(int idx) =>
     int remove_i = find_trade_index(trades_set, idx)
@@ -708,25 +713,26 @@ get_tier_rank(string tier) =>
 
 // Function to find the nearest opposing imbalance POC for take profit
 find_next_target(int current_idx, string current_side) =>
-    float current_poc = array.get(kl_poc, current_idx)
     float target = na
     float best_dist = na
+    if current_idx >= 0 and current_idx < array.size(kl_poc)
+        float current_poc = array.get(kl_poc, current_idx)
 
-    if array.size(kl_poc) > 0
-        for i = 0 to array.size(kl_poc) - 1
-            if i != current_idx
-                string side = array.get(kl_side, i)
-                float poc = array.get(kl_poc, i)
-                string state = array.get(kl_state, i)
+        if array.size(kl_poc) > 0
+            for i = 0 to array.size(kl_poc) - 1
+                if i != current_idx
+                    string side = array.get(kl_side, i)
+                    float poc = array.get(kl_poc, i)
+                    string state = array.get(kl_state, i)
 
-                // Only consider active/entry/testing levels (not rejected) on the opposing side
-                bool valid_buy_target = current_side == "buy" and side == "sell" and poc > current_poc
-                bool valid_sell_target = current_side == "sell" and side == "buy" and poc < current_poc
-                if state != STATE_REJECTED and (valid_buy_target or valid_sell_target)
-                    float dist = math.abs(poc - current_poc)
-                    if na(best_dist) or dist < best_dist
-                        best_dist := dist
-                        target := poc
+                    // Only consider active/entry/testing levels (not rejected) on the opposing side
+                    bool valid_buy_target = current_side == "buy" and side == "sell" and poc > current_poc
+                    bool valid_sell_target = current_side == "sell" and side == "buy" and poc < current_poc
+                    if state != STATE_REJECTED and (valid_buy_target or valid_sell_target)
+                        float dist = math.abs(poc - current_poc)
+                        if na(best_dist) or dist < best_dist
+                            best_dist := dist
+                            target := poc
 
     target
 
@@ -734,74 +740,77 @@ find_next_target(int current_idx, string current_side) =>
 // model and RR-banded target selection. Returns the updated trade sequence value.
 create_trade_for_level(int idx, int seq) =>
     int seq_out = seq
-    string side = array.get(kl_side, idx)
-    float poc = array.get(kl_poc, idx)
+    if idx >= 0 and idx < array.size(kl_side) and idx < array.size(kl_poc)
+        string side = array.get(kl_side, idx)
+        float poc = array.get(kl_poc, idx)
 
-    if na(side)
-        seq_out
-    else
-        float storedSwing = array.get(kl_swing_price, idx)
-        float swingPrice = na
-        if not na(storedSwing)
-            swingPrice := storedSwing
-        else
-            swingPrice := side == "buy" ? swingLowCalc : swingHighCalc
-
-        if na(storedSwing) and not na(swingPrice)
-            array.set(kl_swing_price, idx, swingPrice)
-
-        if na(swingPrice)
+        if na(side)
             seq_out
         else
-            float swingDistTicks = math.abs(poc - swingPrice) / syminfo.mintick
-            float atrTicks = atr / syminfo.mintick
-            float rawStopTicks = swingDistTicks + (atrTicks * atrMult)
-            float clampedStopTicks = math.max(minStopTicks, math.min(rawStopTicks, maxStopTicks))
-            float stop = side == "buy" ? poc - clampedStopTicks * syminfo.mintick : poc + clampedStopTicks * syminfo.mintick
-            float risk = math.abs(poc - stop)
+            float storedSwing = array.get(kl_swing_price, idx)
+            float swingPrice = na
+            if not na(storedSwing)
+                swingPrice := storedSwing
+            else
+                swingPrice := side == "buy" ? swingLowCalc : swingHighCalc
 
-            if risk <= 0
+            if na(storedSwing) and not na(swingPrice)
+                array.set(kl_swing_price, idx, swingPrice)
+
+            if na(swingPrice)
                 seq_out
             else
-                float level_target = find_next_target(idx, side)
+                float swingDistTicks = math.abs(poc - swingPrice) / syminfo.mintick
+                float atrTicks = atr / syminfo.mintick
+                float rawStopTicks = swingDistTicks + (atrTicks * atrMult)
+                float clampedStopTicks = math.max(minStopTicks, math.min(rawStopTicks, maxStopTicks))
+                float stop = side == "buy" ? poc - clampedStopTicks * syminfo.mintick : poc + clampedStopTicks * syminfo.mintick
+                float risk = math.abs(poc - stop)
 
-                float target_to_use = na
-                float rr_to_use = na
+                if risk <= 0
+                    seq_out
+                else
+                    float level_target = find_next_target(idx, side)
 
-                if not na(level_target)
-                    float reward_level = math.abs(level_target - poc)
-                    float rr_level = risk > 0 ? reward_level / risk : na
-                    if not na(rr_level) and rr_level >= minRR and rr_level <= maxRR
-                        target_to_use := level_target
-                        rr_to_use := rr_level
+                    float target_to_use = na
+                    float rr_to_use = na
 
-                if na(target_to_use) or na(rr_to_use)
-                    float dir = side == "buy" ? 1.0 : -1.0
-                    target_to_use := poc + dir * (risk * minRR)
-                    rr_to_use := minRR
+                    if not na(level_target)
+                        float reward_level = math.abs(level_target - poc)
+                        float rr_level = risk > 0 ? reward_level / risk : na
+                        if not na(rr_level) and rr_level >= minRR and rr_level <= maxRR
+                            target_to_use := level_target
+                            rr_to_use := rr_level
 
-                if rr_to_use > maxRR
-                    float dir = side == "buy" ? 1.0 : -1.0
-                    target_to_use := poc + dir * (risk * maxRR)
-                    rr_to_use := maxRR
+                    if na(target_to_use) or na(rr_to_use)
+                        float dir = side == "buy" ? 1.0 : -1.0
+                        target_to_use := poc + dir * (risk * minRR)
+                        rr_to_use := minRR
 
-                array.set(kl_entry_price, idx, poc)
-                array.set(kl_stop_price, idx, stop)
-                array.set(kl_target_price, idx, target_to_use)
-                array.set(kl_rr_ratio, idx, rr_to_use)
-                array.set(kl_state, idx, STATE_ENTRY)
-                array.set(kl_last_test_bar, idx, bar_index)
+                    if rr_to_use > maxRR
+                        float dir = side == "buy" ? 1.0 : -1.0
+                        target_to_use := poc + dir * (risk * maxRR)
+                        rr_to_use := maxRR
 
-                array.set(trade_state, idx, TE_STATE_POSSIBLE)
-                array.set(trade_opened, idx, false)
-                array.set(trade_entry, idx, poc)
-                array.set(trade_stop, idx, stop)
-                array.set(trade_target, idx, target_to_use)
-                array.set(trade_ticks, idx, na)
+                    array.set(kl_entry_price, idx, poc)
+                    array.set(kl_stop_price, idx, stop)
+                    array.set(kl_target_price, idx, target_to_use)
+                    array.set(kl_rr_ratio, idx, rr_to_use)
+                    array.set(kl_state, idx, STATE_ENTRY)
+                    array.set(kl_last_test_bar, idx, bar_index)
 
-                seq_out := register_set_trade(idx, seq_out)
+                    array.set(trade_state, idx, TE_STATE_POSSIBLE)
+                    array.set(trade_opened, idx, false)
+                    array.set(trade_entry, idx, poc)
+                    array.set(trade_stop, idx, stop)
+                    array.set(trade_target, idx, target_to_use)
+                    array.set(trade_ticks, idx, na)
 
-                seq_out
+                    seq_out := register_set_trade(idx, seq_out)
+
+                    seq_out
+    else
+        seq_out
 
 // ============================================================================
 // IMBALANCE DETECTION
@@ -1499,17 +1508,23 @@ if array.size(closed_trade_boxes) > 0
 if not showTradeVisuals
     clear_trade_visuals()
 else
-    for i = 0 to array.size(trades_set) - 1
-        Trade t = array.get(trades_set, i)
-        ensure_trade_visual(t, "set")
+    if array.size(trades_set) > 0
+        for i = 0 to array.size(trades_set) - 1
+            Trade t = f_safe_get(trades_set, i)
+            if not na(t)
+                ensure_trade_visual(t, "set")
 
-    for i = 0 to array.size(trades_open) - 1
-        Trade t = array.get(trades_open, i)
-        ensure_trade_visual(t, "open")
+    if array.size(trades_open) > 0
+        for i = 0 to array.size(trades_open) - 1
+            Trade t = f_safe_get(trades_open, i)
+            if not na(t)
+                ensure_trade_visual(t, "open")
 
-    for i = 0 to array.size(trades_closed) - 1
-        Trade t = array.get(trades_closed, i)
-        ensure_trade_visual(t, "closed")
+    if array.size(trades_closed) > 0
+        for i = 0 to array.size(trades_closed) - 1
+            Trade t = f_safe_get(trades_closed, i)
+            if not na(t)
+                ensure_trade_visual(t, "closed")
 
 f_clear_table(tbl, int cols, int rows) =>
     if not na(tbl)
