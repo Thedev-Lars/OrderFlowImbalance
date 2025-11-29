@@ -30,7 +30,8 @@ mobileCompact = input.bool(false, "Mobile Compact Mode", group="Display")
 minRR = input.float(3.0, "Minimum Risk:Reward Ratio", minval=2.0, step=0.5, group="Trade Logic")
 rejectionBuffer = input.float(5.0, "Stop Loss Buffer (Ticks)", minval=1.0, step=0.5, group="Trade Logic")
 profitConfirmBars = input.int(2, "Bars to Confirm Profit", minval=1, maxval=5, group="Trade Logic")
-maxRR        = input.float(4.0,  "Maximum Risk:Reward Ratio", minval=minRR, step=0.5, group="Trade Logic")
+maxRR_input        = input.float(4.0,  "Maximum Risk:Reward Ratio", minval=0.0, step=0.5, group="Trade Logic")
+maxRR = math.max(maxRR_input, minRR)
 atrLength    = input.int(14,     "ATR Length",                minval=1,                group="Trade Logic")
 atrMult      = input.float(0.5,  "ATR Multiplier",            minval=0.0, step=0.1,  group="Trade Logic")
 minStopTicks = input.float(25.0, "Min Stop Size (Ticks)",     minval=1.0, step=1.0,  group="Trade Logic")
@@ -380,11 +381,13 @@ bool create_trade_for_level(int idx) =>
     else
         float storedSwing = array.get(kl_swing_price, idx)
         float swingPrice = na
+        float swingLow = ta.lowest(low, swingLookback)
+        float swingHigh = ta.highest(high, swingLookback)
 
         if not na(storedSwing)
             swingPrice := storedSwing
         else
-            swingPrice := side == "buy" ? ta.lowest(low, swingLookback) : ta.highest(high, swingLookback)
+            swingPrice := side == "buy" ? swingLow : swingHigh
 
         if na(storedSwing) and not na(swingPrice)
             array.set(kl_swing_price, idx, swingPrice)
@@ -500,6 +503,8 @@ if barstate.isconfirmed
             float delta = buy_vol - sell_vol
             
             bool merged = false
+            float swingLowRef = ta.lowest(low, swingLookback)
+            float swingHighRef = ta.highest(high, swingLookback)
             if array.size(kl_range_top) > 0
                 for j = 0 to array.size(kl_range_top) - 1
                     if array.get(kl_side, j) == side
@@ -531,7 +536,7 @@ if barstate.isconfirmed
 
                             // Seed a reference swing for this level if it has not been captured yet
                             if na(array.get(kl_swing_price, j))
-                                float swing_ref_existing = side == "buy" ? ta.lowest(low, swingLookback) : ta.highest(high, swingLookback)
+                                float swing_ref_existing = side == "buy" ? swingLowRef : swingHighRef
                                 array.set(kl_swing_price, j, swing_ref_existing)
 
                             array.set(kl_origin_bar, j, bar_index)
@@ -543,7 +548,7 @@ if barstate.isconfirmed
                 float range_bottom = price - bucket_size
                 float strength = (math.abs(delta) * ratio) / 100
                 string tier = get_tier(ratio)
-                float swing_ref = side == "buy" ? ta.lowest(low, swingLookback) : ta.highest(high, swingLookback)
+                float swing_ref = side == "buy" ? swingLowRef : swingHighRef
 
                 array.push(kl_range_top, range_top)
                 array.push(kl_range_bottom, range_bottom)
