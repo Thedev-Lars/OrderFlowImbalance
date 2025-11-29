@@ -543,7 +543,7 @@ ensure_trade_visual(Trade t, string state_label) =>
     box.set_bottom(reward_box, reward_bottom_now)
 
     color line_col = neutralLine
-    line_style line_style_val = line.style_dotted
+    var line_style_val = line.style_dotted
     int line_w = 1
     color risk_bg = color.new(riskColor, 90)
     color reward_bg = color.new(rewardColor, 90)
