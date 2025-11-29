@@ -157,6 +157,7 @@ var string TIER_MODERATE = "⭐"
 var array<float> kl_range_top = array.new<float>()
 var array<float> kl_range_bottom = array.new<float>()
 var array<float> kl_poc = array.new<float>()
+var array<float> kl_swing_price = array.new<float>()
 var array<string> kl_side = array.new<string>()
 var array<float> kl_strength = array.new<float>()
 var array<float> kl_peak_ratio = array.new<float>()
@@ -211,6 +212,7 @@ var array<float> closed_stop = array.new<float>()
 var array<float> closed_target = array.new<float>()
 var array<float> closed_rr = array.new<float>()
 var array<float> closed_ticks = array.new<float>()
+var array<float> closed_trade_rr = array.new<float>()
 var array<string> closed_result = array.new<string>()
 var array<box> closed_trade_boxes = array.new<box>()
 
@@ -232,6 +234,7 @@ if current_day != last_session_day
     array.clear(kl_range_top)
     array.clear(kl_range_bottom)
     array.clear(kl_poc)
+    array.clear(kl_swing_price)
     array.clear(kl_side)
     array.clear(kl_strength)
     array.clear(kl_peak_ratio)
@@ -267,6 +270,7 @@ if current_day != last_session_day
     array.clear(closed_target)
     array.clear(closed_rr)
     array.clear(closed_ticks)
+    array.clear(closed_trade_rr)
     array.clear(closed_result)
     if array.size(closed_trade_boxes) > 0
         for i = 0 to array.size(closed_trade_boxes) - 1
@@ -276,12 +280,31 @@ if current_day != last_session_day
 
 record_closed_trade(int idx) =>
     if idx >= 0 and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
+        float entry = array.get(kl_entry_price, idx)
+        float stop = array.get(kl_stop_price, idx)
+        float target = array.get(kl_target_price, idx)
+        string outcome_val = array.get(kl_outcome, idx)
+        string side_val = array.get(kl_side, idx)
+        float exit_price = outcome_val == "Profit" ? target : stop
+
+        float risk_price = math.abs(entry - stop)
+        float pnl_price = na
+        if side_val == "buy"
+            pnl_price := exit_price - entry
+        else if side_val == "sell"
+            pnl_price := entry - exit_price
+
+        float realized_rr = na
+        if risk_price > 0 and not na(pnl_price)
+            realized_rr := pnl_price / risk_price
+
         array.push(closed_side, array.get(kl_side, idx))
         array.push(closed_entry, array.get(kl_entry_price, idx))
         array.push(closed_stop, array.get(kl_stop_price, idx))
         array.push(closed_target, array.get(kl_target_price, idx))
         array.push(closed_rr, array.get(kl_rr_ratio, idx))
         array.push(closed_ticks, array.get(kl_realized_ticks, idx))
+        array.push(closed_trade_rr, realized_rr)
         array.push(closed_result, array.get(kl_outcome, idx))
         array.set(kl_closed_logged, idx, true)
 
@@ -355,7 +378,14 @@ bool create_trade_for_level(int idx) =>
     if na(side)
         false
     else
-        float swingPrice = side == "buy" ? ta.lowest(low, swingLookback) : ta.highest(high, swingLookback)
+        float storedSwing = array.get(kl_swing_price, idx)
+        float swingPrice = na
+
+        if not na(storedSwing)
+            swingPrice := storedSwing
+        else
+            swingPrice := side == "buy" ? ta.lowest(low, swingLookback) : ta.highest(high, swingLookback)
+
         if na(swingPrice)
             false
         else
@@ -505,10 +535,12 @@ if barstate.isconfirmed
                 float range_bottom = price - bucket_size
                 float strength = (math.abs(delta) * ratio) / 100
                 string tier = get_tier(ratio)
-                
+                float swing_ref = side == "buy" ? ta.lowest(low, swingLookback) : ta.highest(high, swingLookback)
+
                 array.push(kl_range_top, range_top)
                 array.push(kl_range_bottom, range_bottom)
                 array.push(kl_poc, price)
+                array.push(kl_swing_price, swing_ref)
                 array.push(kl_side, side)
                 array.push(kl_strength, strength)
                 array.push(kl_peak_ratio, ratio)
@@ -572,7 +604,11 @@ if barstate.isconfirmed
                     tmp_f := array.get(kl_poc, j)
                     array.set(kl_poc, j, array.get(kl_poc, j + 1))
                     array.set(kl_poc, j + 1, tmp_f)
-                    
+
+                    tmp_f := array.get(kl_swing_price, j)
+                    array.set(kl_swing_price, j, array.get(kl_swing_price, j + 1))
+                    array.set(kl_swing_price, j + 1, tmp_f)
+
                     string tmp_s = array.get(kl_side, j)
                     array.set(kl_side, j, array.get(kl_side, j + 1))
                     array.set(kl_side, j + 1, tmp_s)
@@ -703,6 +739,7 @@ if barstate.isconfirmed
             array.pop(kl_range_top)
             array.pop(kl_range_bottom)
             array.pop(kl_poc)
+            array.pop(kl_swing_price)
             array.pop(kl_side)
             array.pop(kl_strength)
             array.pop(kl_peak_ratio)
@@ -1126,6 +1163,21 @@ var table tbl_trades = table.new(position=mobileCompact ? position.bottom_center
 var table tbl_flow = table.new(position=position.top_right, columns=mobileCompact ? 4 : 12, rows=mobileCompact ? 10 : 22, bgcolor=color.new(color.black, 80), border_width=1)
 var table tbl_mobile = table.new(position=position.bottom_center, columns=4, rows=16, bgcolor=color.new(color.black, 80), border_width=1)
 
+float closed_r_total = 0.0
+int closed_r_trades = 0
+int closed_r_wins = 0
+int closed_rr_count = array.size(closed_trade_rr)
+if closed_rr_count > 0
+    for r_idx = 0 to closed_rr_count - 1
+        float rr_val = array.get(closed_trade_rr, r_idx)
+        if not na(rr_val)
+            closed_r_total += rr_val
+            closed_r_trades += 1
+            if rr_val > 0
+                closed_r_wins += 1
+float closed_r_avg = closed_r_trades > 0 ? closed_r_total / closed_r_trades : na
+float closed_r_winrate = closed_r_trades > 0 ? (closed_r_wins * 100.0) / closed_r_trades : na
+
 if barstate.islast and not mobileCompact
     table.cell(tbl_key, 0, 0, "KEY IMBALANCE LEVELS", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 50))
     table.merge_cells(tbl_key, 0, 0, 8, 0)
@@ -1286,12 +1338,18 @@ if barstate.islast and mobileCompact
     table.merge_cells(tbl_mobile, 0, 7, 2, 7)
     table.cell(tbl_mobile, 3, 7, str.tostring(math.round(closed_tick_sum_mobile), "+#;-#"), text_color=color.white, text_size=size.small, bgcolor=section_bg)
 
-    table.cell(tbl_mobile, 0, 8, "Recent Closed", text_color=color.white, text_size=size.small, bgcolor=header_bg)
-    table.merge_cells(tbl_mobile, 0, 8, 3, 8)
-    table.cell(tbl_mobile, 0, 9, "Side", text_color=color.white, text_size=size.small, bgcolor=section_bg)
-    table.cell(tbl_mobile, 1, 9, "Entry", text_color=color.white, text_size=size.small, bgcolor=section_bg)
-    table.cell(tbl_mobile, 2, 9, "Ticks", text_color=color.white, text_size=size.small, bgcolor=section_bg)
-    table.cell(tbl_mobile, 3, 9, "Result", text_color=color.white, text_size=size.small, bgcolor=section_bg)
+    string avg_r_mobile = na(closed_r_avg) ? "na" : str.tostring(closed_r_avg, "#.0")
+    string win_r_mobile = na(closed_r_winrate) ? "na" : str.tostring(closed_r_winrate, "#") + "%"
+    table.cell(tbl_mobile, 0, 8, "Closed R", text_color=color.white, text_size=size.small, bgcolor=section_bg)
+    table.merge_cells(tbl_mobile, 0, 8, 2, 8)
+    table.cell(tbl_mobile, 3, 8, str.tostring(closed_r_total, "+#.0;-#.0") + " | " + avg_r_mobile + " | " + win_r_mobile, text_color=color.white, text_size=size.small, bgcolor=section_bg)
+
+    table.cell(tbl_mobile, 0, 9, "Recent Closed", text_color=color.white, text_size=size.small, bgcolor=header_bg)
+    table.merge_cells(tbl_mobile, 0, 9, 3, 9)
+    table.cell(tbl_mobile, 0, 10, "Side", text_color=color.white, text_size=size.small, bgcolor=section_bg)
+    table.cell(tbl_mobile, 1, 10, "Entry", text_color=color.white, text_size=size.small, bgcolor=section_bg)
+    table.cell(tbl_mobile, 2, 10, "Ticks", text_color=color.white, text_size=size.small, bgcolor=section_bg)
+    table.cell(tbl_mobile, 3, 10, "Result", text_color=color.white, text_size=size.small, bgcolor=section_bg)
 
     int recent = math.min(5, array.size(closed_side))
     for r = 0 to recent - 1
@@ -1302,13 +1360,13 @@ if barstate.islast and mobileCompact
         string result_val = array.get(closed_result, idx)
         color row_bg = s_side == "buy" ? color.new(col_buy, 85) : color.new(col_sell, 85)
         string ticks_str = na(ticks_val) ? "-" : str.tostring(math.round(ticks_val), "+#;-#")
-        int row_pos = 10 + r
+        int row_pos = 11 + r
         table.cell(tbl_mobile, 0, row_pos, s_side == "buy" ? "Buy" : "Sell", text_color=color.white, text_size=size.small, bgcolor=row_bg)
         table.cell(tbl_mobile, 1, row_pos, str.tostring(e_entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
         table.cell(tbl_mobile, 2, row_pos, ticks_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
         table.cell(tbl_mobile, 3, row_pos, result_val, text_color=color.white, text_size=size.small, bgcolor=row_bg)
 
-    for r = 10 + recent to 14
+    for r = 11 + recent to 15
         for c = 0 to 3
             table.cell(tbl_mobile, c, r, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 92))
 
@@ -1486,6 +1544,13 @@ if barstate.islast and not mobileCompact
     table.cell(tbl_trades, 0, t_row, "Total Ticks", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
     table.merge_cells(tbl_trades, 0, t_row, 4, t_row)
     table.cell(tbl_trades, 5, t_row, str.tostring(math.round(closed_tick_sum), "+#;-#"), text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+    table.cell(tbl_trades, 6, t_row, "", bgcolor=color.new(color.gray, 75))
+    t_row += 1
+    string avg_r_str = na(closed_r_avg) ? "na" : str.tostring(closed_r_avg, "#.0")
+    string win_r_str = na(closed_r_winrate) ? "na" : str.tostring(closed_r_winrate, "#") + "%"
+    table.cell(tbl_trades, 0, t_row, "Closed R | Avg R | Win%", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+    table.merge_cells(tbl_trades, 0, t_row, 4, t_row)
+    table.cell(tbl_trades, 5, t_row, str.tostring(closed_r_total, "+#.0;-#.0") + " | " + avg_r_str + " | " + win_r_str, text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
     table.cell(tbl_trades, 6, t_row, "", bgcolor=color.new(color.gray, 75))
     t_row += 1
     table.cell(tbl_trades, 0, t_row, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
