@@ -1778,7 +1778,8 @@ if showTables
     
     // Build a descending-by-price ordering so rows stack from high to low
     for i = 0 to level_count - 1
-        array.push(kl_poc_buffer, array.get(kl_poc, i))
+        float poc_val_src = array.size(kl_poc) > i ? array.get(kl_poc, i) : na
+        array.push(kl_poc_buffer, poc_val_src)
     for n = 0 to display_count - 1
         int best_pos = -1
         float best_val = na
@@ -1795,6 +1796,9 @@ if showTables
         int data_row = row + 2
         if row < display_count and row < array.size(kl_price_order)
             int level_idx = array.get(kl_price_order, row)
+            bool level_idx_ok = level_idx >= 0 and level_idx < array.size(kl_range_top) and level_idx < array.size(kl_range_bottom) and level_idx < array.size(kl_poc) and level_idx < array.size(kl_side) and level_idx < array.size(kl_peak_ratio) and level_idx < array.size(kl_tier) and level_idx < array.size(kl_strength) and level_idx < array.size(kl_state) and level_idx < array.size(kl_test_count) and level_idx < array.size(kl_rr_ratio)
+            if not level_idx_ok
+                continue
             float range_top = array.get(kl_range_top, level_idx)
             float range_bottom = array.get(kl_range_bottom, level_idx)
             float poc = array.get(kl_poc, level_idx)
