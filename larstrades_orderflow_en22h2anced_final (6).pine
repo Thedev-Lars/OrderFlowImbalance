@@ -1858,24 +1858,24 @@ if showTables
             else if state == STATE_TESTING
                 display_state := "Live"
             else if state == STATE_PROFIT
-                    display_state := "Profit"
-                else if state == STATE_HELD
-                    display_state := "Held"
-                else if state == STATE_CLOSED
-                    display_state := array.get(kl_outcome, row)
-                else if state == STATE_LOSS
-                    display_state := "Loss"
-                else if state == STATE_REJECTED
-                    display_state := "Rejected"
-                else
-                    display_state := ""
-                table.cell(tbl_key, 6, data_row, display_state, text_color=state_color, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_key, 7, data_row, rr_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_key, 8, data_row, str.tostring(tests), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                display_state := "Profit"
+            else if state == STATE_HELD
+                display_state := "Held"
+            else if state == STATE_CLOSED
+                display_state := array.get(kl_outcome, row)
+            else if state == STATE_LOSS
+                display_state := "Loss"
+            else if state == STATE_REJECTED
+                display_state := "Rejected"
             else
-                color empty_bg = color.new(color.gray, 95)
-                for col = 0 to 8
-                    table.cell(tbl_key, col, data_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+                display_state := ""
+            table.cell(tbl_key, 6, data_row, display_state, text_color=state_color, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 7, data_row, rr_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 8, data_row, str.tostring(tests), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+        else
+            color empty_bg = color.new(color.gray, 95)
+            for col = 0 to 8
+                table.cell(tbl_key, col, data_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
 
     if barstate.islast and mobileCompact
         color header_bg = color.new(color.gray, 40)
