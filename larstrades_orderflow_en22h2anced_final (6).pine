@@ -1506,6 +1506,17 @@ f_clear(table tbl, int cols, int rows) =>
     if not na(tbl)
         table.clear(tbl, 0, 0, cols - 1, rows - 1)
 
+f_manage_table(table tbl, bool enabled, position pos, int cols, int rows, color bg, int border_width) =>
+    table result = tbl
+    if not enabled
+        if not na(result)
+            table.delete(result)
+        result := na
+    else
+        if na(result)
+            result := table.new(pos, cols, rows, bg, border_width)
+    result
+
 // ============================================================================
 // TABLES
 // ============================================================================
@@ -1516,53 +1527,39 @@ var table tbl_performance = na
 var table tbl_flow = na
 var table tbl_timeline = na
 var bool table_mobile_mode = false
-
-delete_tables() =>
-    if not na(tbl_key)
-        table.delete(tbl_key)
-    if not na(tbl_trades)
-        table.delete(tbl_trades)
-    if not na(tbl_performance)
-        table.delete(tbl_performance)
-    if not na(tbl_flow)
-        table.delete(tbl_flow)
-    if not na(tbl_timeline)
-        table.delete(tbl_timeline)
-    tbl_key := na
-    tbl_trades := na
-    tbl_performance := na
-    tbl_flow := na
-    tbl_timeline := na
+var bool table_mobile_mode_initialized = false
 
 if not showTables
-    delete_tables()
+    tbl_key := f_manage_table(tbl_key, false, position.bottom_right, 9, 12, color.new(color.black, 80), 1)
+    tbl_trades := f_manage_table(tbl_trades, false, position.top_left, 7, 16, color.new(color.black, 80), 1)
+    tbl_performance := f_manage_table(tbl_performance, false, position.bottom_left, 6, 20, color.new(color.black, 80), 1)
+    tbl_flow := f_manage_table(tbl_flow, false, position.top_right, 12, 22, color.new(color.black, 80), 1)
+    tbl_timeline := f_manage_table(tbl_timeline, false, position.top_right, 3, 20, color.new(color.black, 80), 1)
 else
-    bool recreate = na(table_mobile_mode) or table_mobile_mode != mobileCompact
-    if recreate
-        delete_tables()
-        table_mobile_mode := mobileCompact
+    bool use_mobile_layout = mobileCompact
+    bool recreate_layout = not table_mobile_mode_initialized or table_mobile_mode != use_mobile_layout
+    table_mobile_mode := use_mobile_layout
+    table_mobile_mode_initialized := true
 
-    int top_margin = 30
-    int bottom_margin = 10
+    if recreate_layout
+        tbl_key := na
+        tbl_trades := na
+        tbl_performance := na
+        tbl_flow := na
+        tbl_timeline := na
 
-    if mobileCompact
-        if na(tbl_key)
-            tbl_key := table.new(position=position.bottom_center, columns=9, rows=10, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=bottom_margin)
-        if na(tbl_trades)
-            tbl_trades := table.new(position=position.top_center, columns=4, rows=10, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=top_margin)
-        if na(tbl_timeline)
-            tbl_timeline := table.new(position=position.top_right, columns=3, rows=10, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=top_margin)
+    if use_mobile_layout
+        tbl_key := f_manage_table(tbl_key, true, position.bottom_center, 9, 10, color.new(color.black, 80), 1)
+        tbl_trades := f_manage_table(tbl_trades, true, position.top_center, 4, 10, color.new(color.black, 80), 1)
+        tbl_timeline := f_manage_table(tbl_timeline, true, position.top_right, 3, 10, color.new(color.black, 80), 1)
+        tbl_performance := f_manage_table(tbl_performance, false, position.bottom_left, 6, 20, color.new(color.black, 80), 1)
+        tbl_flow := f_manage_table(tbl_flow, false, position.top_right, 12, 22, color.new(color.black, 80), 1)
     else
-        if na(tbl_key)
-            tbl_key := table.new(position=position.bottom_right, columns=9, rows=12, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=bottom_margin)
-        if na(tbl_trades)
-            tbl_trades := table.new(position=position.top_left, columns=7, rows=16, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=top_margin)
-        if na(tbl_performance)
-            tbl_performance := table.new(position=position.bottom_left, columns=6, rows=20, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=bottom_margin)
-        if na(tbl_flow)
-            tbl_flow := table.new(position=position.top_right, columns=12, rows=22, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=top_margin)
-        if na(tbl_timeline)
-            tbl_timeline := table.new(position=position.top_right, columns=3, rows=20, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=top_margin + 260)
+        tbl_key := f_manage_table(tbl_key, true, position.bottom_right, 9, 12, color.new(color.black, 80), 1)
+        tbl_trades := f_manage_table(tbl_trades, true, position.top_left, 7, 16, color.new(color.black, 80), 1)
+        tbl_performance := f_manage_table(tbl_performance, true, position.bottom_left, 6, 20, color.new(color.black, 80), 1)
+        tbl_flow := f_manage_table(tbl_flow, true, position.top_right, 12, 22, color.new(color.black, 80), 1)
+        tbl_timeline := f_manage_table(tbl_timeline, true, position.top_right, 3, 20, color.new(color.black, 80), 1)
 
 if showTables
     float closed_r_total = 0.0
