@@ -64,6 +64,8 @@ col_target = input.color(#ffeb3b, "Take Profit Color", group="Colors")
 
 atr_value = ta.atr(atrLength)
 bucket_size = atr_value / priceLevelsPerBar
+float swingLowCalc = ta.lowest(low, swingLookback)
+float swingHighCalc = ta.highest(high, swingLookback)
 
 float barBuyVol = close > open ? volume * 0.7 : volume * 0.3
 float barSellVol = close > open ? volume * 0.3 : volume * 0.7
@@ -381,13 +383,10 @@ create_trade_for_level(int idx) =>
     else
         float storedSwing = array.get(kl_swing_price, idx)
         float swingPrice = na
-        float swingLow = ta.lowest(low, swingLookback)
-        float swingHigh = ta.highest(high, swingLookback)
-
         if not na(storedSwing)
             swingPrice := storedSwing
         else
-            swingPrice := side == "buy" ? swingLow : swingHigh
+            swingPrice := side == "buy" ? swingLowCalc : swingHighCalc
 
         if na(storedSwing) and not na(swingPrice)
             array.set(kl_swing_price, idx, swingPrice)
@@ -489,8 +488,8 @@ if barstate.isconfirmed
             float delta = buy_vol - sell_vol
             
             bool merged = false
-            float swingLowRef = ta.lowest(low, swingLookback)
-            float swingHighRef = ta.highest(high, swingLookback)
+            float swingLowRef = swingLowCalc
+            float swingHighRef = swingHighCalc
             if array.size(kl_range_top) > 0
                 for j = 0 to array.size(kl_range_top) - 1
                     if array.get(kl_side, j) == side
@@ -979,8 +978,8 @@ if barstate.islast
             float rr = array.get(kl_rr_ratio, latest_idx)
 
             if not na(entry) and not na(stop) and not na(target) and not na(rr)
-                float x1 = bar_index - 1
-                float x2 = bar_index
+                int x1 = bar_index - 1
+                int x2 = bar_index
 
                 if na(debugEntryLine)
                     debugEntryLine := line.new(x1, entry, x2, entry, color=color.new(color.silver, 40), width=1, style=line.style_solid)
