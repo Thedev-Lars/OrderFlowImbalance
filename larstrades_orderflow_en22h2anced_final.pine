@@ -1461,6 +1461,8 @@ if barstate.islast and not mobileCompact
     int total_levels = array.size(kl_state)
     float closed_tick_sum = 0.0
     int closed_tick_count = array.size(closed_ticks)
+    int trades_rows = mobileCompact ? 18 : 28
+    int last_trade_row = trades_rows - 1
     if closed_tick_count > 0
         for i_close = 0 to closed_tick_count - 1
             float tick_val = array.get(closed_ticks, i_close)
@@ -1508,7 +1510,8 @@ if barstate.islast and not mobileCompact
                 table.cell(tbl_trades, 5, t_row, e_tier, text_color=color.yellow, text_size=size.small, bgcolor=row_bg)
                 table.cell(tbl_trades, 6, t_row, "", bgcolor=row_bg)
                 t_row += 1
-    for r = t_row to max_p + 2
+    int possible_fill_end = math.min(max_p + 2, last_trade_row)
+    for r = t_row to possible_fill_end
         for c = 0 to 6
             table.cell(tbl_trades, c, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
     t_row := max_p + 3
@@ -1594,8 +1597,6 @@ if barstate.islast and not mobileCompact
     t_row += 1
 
     int max_c = 8
-    int trades_rows = mobileCompact ? 18 : 28
-    int last_trade_row = trades_rows - 1
     int closed_count = array.size(closed_side)
     if closed_count > 0
         for idx = 0 to closed_count - 1
