@@ -33,6 +33,8 @@ resetPerformance = input.bool(false, "Reset Performance", group="Performance")
 minRR = input.float(3.0, "Minimum Risk:Reward Ratio", minval=2.0, step=0.5, group="Trade Logic")
 rejectionBuffer = input.float(5.0, "Stop Loss Buffer (Ticks)", minval=1.0, step=0.5, group="Trade Logic")
 profitConfirmBars = input.int(2, "Bars to Confirm Profit", minval=1, maxval=5, group="Trade Logic")
+// New setting: number of bars to confirm a stop loss hit (Option C - give trades room to breathe)
+stopConfirmBars   = input.int(2, "Bars to Confirm Stop Loss", minval=1, maxval=5, group="Trade Logic")
 maxRR_input        = input.float(4.0,  "Maximum Risk:Reward Ratio", minval=0.0, step=0.5, group="Trade Logic")
 maxRR = math.max(maxRR_input, minRR)
 atrLength    = input.int(14,     "ATR Length",                minval=1,                group="Trade Logic")
@@ -913,7 +915,8 @@ if array.size(kl_state) > 0
                     else if not na(stop) and close < stop
                         reject_count := reject_count + 1
                         array.set(kl_reject_count, i, reject_count)
-                        if reject_count >= profitConfirmBars
+                        // Use the stop confirmation setting for losses (Option C)
+                        if reject_count >= stopConfirmBars
                             float ticks_val = (stop - entry_price) / syminfo.mintick
                             finalize_close(i, "Loss", ticks_val)
                     else
@@ -930,7 +933,8 @@ if array.size(kl_state) > 0
                     else if not na(stop) and close > stop
                         reject_count := reject_count + 1
                         array.set(kl_reject_count, i, reject_count)
-                        if reject_count >= profitConfirmBars
+                        // Use the stop confirmation setting for losses (Option C)
+                        if reject_count >= stopConfirmBars
                             float ticks_val = (entry_price - stop) / syminfo.mintick
                             finalize_close(i, "Loss", ticks_val)
                     else
@@ -1250,10 +1254,11 @@ if array.size(closed_trade_boxes) > 0
 // ============================================================================
 
 var table tbl_key = table.new(position=position.bottom_right, columns=9, rows=12, bgcolor=color.new(color.black, 80), border_width=1)
-var table tbl_trades = table.new(position=mobileCompact ? position.bottom_center : position.bottom_left, columns=mobileCompact ? 4 : 7, rows=mobileCompact ? 18 : 28, bgcolor=color.new(color.black, 80), border_width=1)
+// Reduce the trades table height to avoid overlap with the performance panel
+var table tbl_trades = table.new(position=mobileCompact ? position.bottom_center : position.top_left, columns=mobileCompact ? 4 : 7, rows=mobileCompact ? 12 : 16, bgcolor=color.new(color.black, 80), border_width=1)
 var table tbl_flow = table.new(position=position.top_right, columns=mobileCompact ? 4 : 12, rows=mobileCompact ? 10 : 22, bgcolor=color.new(color.black, 80), border_width=1)
 var table tbl_mobile = table.new(position=position.bottom_center, columns=4, rows=16, bgcolor=color.new(color.black, 80), border_width=1)
-var table tbl_performance = table.new(position=position.top_left, columns=6, rows=20, bgcolor=color.new(color.black, 80), border_width=1)
+var table tbl_performance = table.new(position=position.bottom_left, columns=6, rows=20, bgcolor=color.new(color.black, 80), border_width=1)
 
 float closed_r_total = 0.0
 int closed_r_trades = 0
@@ -1614,7 +1619,8 @@ if barstate.islast and not mobileCompact
     // ---------------------------------------------------------------------
     // Unified trades table showing possible (ENTRY) and open (TESTING) trades only.
     int total_levels = array.size(kl_state)
-    int trades_rows = mobileCompact ? 18 : 28
+    // Use a smaller number of rows to shorten the trades table and reduce overlap with other tables
+    int trades_rows = mobileCompact ? 12 : 16
     int last_trade_row = trades_rows - 1
 
     // Ensure any closed trades are logged before rendering so winners/losses always appear
