@@ -26,6 +26,9 @@ showClosedTradeBoxes = input.bool(true, "Show Closed Trade Boxes", group="Displa
 closedTradeBoxOpacity = input.int(75, "Closed Box Opacity", minval=10, maxval=95, group="Display")
 mobileCompact = input.bool(false, "Mobile Compact Mode", group="Display")
 
+// Performance Controls
+resetPerformance = input.bool(false, "Reset Performance", group="Performance")
+
 // Trade Settings
 minRR = input.float(3.0, "Minimum Risk:Reward Ratio", minval=2.0, step=0.5, group="Trade Logic")
 rejectionBuffer = input.float(5.0, "Stop Loss Buffer (Ticks)", minval=1.0, step=0.5, group="Trade Logic")
@@ -219,10 +222,27 @@ var float[] closed_ticks = array.new_float()
 var float[] closed_trade_rr = array.new_float()
 var string[] closed_result = array.new_string()
 var box[] closed_trade_boxes = array.new_box()
+var int[] trade_closed_bar = array.new_int()
+
+var bool perfResetLatched = false
 
 // Session management
 var int last_session_day = 0
 int current_day = dayofmonth(time)
+clear_performance_history() =>
+    array.clear(closed_side)
+    array.clear(closed_entry)
+    array.clear(closed_stop)
+    array.clear(closed_target)
+    array.clear(closed_rr)
+    array.clear(closed_ticks)
+    array.clear(closed_trade_rr)
+    array.clear(closed_result)
+    if array.size(closed_trade_boxes) > 0
+        for i = 0 to array.size(closed_trade_boxes) - 1
+            box.delete(array.get(closed_trade_boxes, i))
+    array.clear(closed_trade_boxes)
+
 if current_day != last_session_day
     if array.size(kl_box) > 0
         for i = 0 to array.size(kl_box) - 1
@@ -269,19 +289,15 @@ if current_day != last_session_day
     array.clear(trade_stop)
     array.clear(trade_target)
     array.clear(trade_ticks)
-    array.clear(closed_side)
-    array.clear(closed_entry)
-    array.clear(closed_stop)
-    array.clear(closed_target)
-    array.clear(closed_rr)
-    array.clear(closed_ticks)
-    array.clear(closed_trade_rr)
-    array.clear(closed_result)
-    if array.size(closed_trade_boxes) > 0
-        for i = 0 to array.size(closed_trade_boxes) - 1
-            box.delete(array.get(closed_trade_boxes, i))
-    array.clear(closed_trade_boxes)
+    array.clear(trade_closed_bar)
+    clear_performance_history()
     last_session_day := current_day
+
+if resetPerformance and not perfResetLatched
+    clear_performance_history()
+    perfResetLatched := true
+else if not resetPerformance
+    perfResetLatched := false
 
 record_closed_trade(int idx) =>
     if idx >= 0 and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
@@ -317,10 +333,11 @@ finalize_close(int idx, string outcome, float ticks_val) =>
     // Skip if already logged or index is out of sync
     bool base_loggable = idx >= 0 and idx < array.size(kl_state) and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
     int ts = idx >= 0 and idx < array.size(trade_state) ? array.get(trade_state, idx) : na
-    bool trade_live = ts == TE_STATE_OPEN or ts == TE_STATE_CLOSED_WIN or ts == TE_STATE_CLOSED_LOSS
+    bool trade_live = ts == TE_STATE_OPEN
     bool trade_entered = idx >= 0 and idx < array.size(trade_opened) ? array.get(trade_opened, idx) : false
     bool has_prices = idx < array.size(kl_entry_price) and idx < array.size(kl_stop_price) and not na(array.get(kl_entry_price, idx)) and not na(array.get(kl_stop_price, idx))
-    bool loggable = base_loggable and trade_live and trade_entered and has_prices
+    bool already_closed = idx < array.size(trade_closed_bar) and not na(array.get(trade_closed_bar, idx))
+    bool loggable = base_loggable and trade_live and trade_entered and has_prices and not already_closed
     if loggable
         array.set(kl_realized_ticks, idx, ticks_val)
         array.set(kl_outcome, idx, outcome)
@@ -328,6 +345,8 @@ finalize_close(int idx, string outcome, float ticks_val) =>
         if idx < array.size(trade_state)
             array.set(trade_state, idx, outcome == "Profit" ? TE_STATE_CLOSED_WIN : TE_STATE_CLOSED_LOSS)
         array.set(kl_last_test_bar, idx, bar_index)
+        if idx < array.size(trade_closed_bar)
+            array.set(trade_closed_bar, idx, bar_index)
         record_closed_trade(idx)
 
         // Draw a persistent closed-trade box from entry to exit
@@ -581,6 +600,7 @@ if barstate.isconfirmed
                 array.push(trade_target, na)
                 array.push(trade_ticks, na)
                 array.push(trade_entry_bar, na)
+                array.push(trade_closed_bar, na)
 
                 // Immediately build a trade setup for this new key level.
                 // This uses the unified swing+ATR stop and RR-banded target logic.
@@ -727,6 +747,10 @@ if barstate.isconfirmed
                     array.set(trade_entry_bar, j, array.get(trade_entry_bar, j + 1))
                     array.set(trade_entry_bar, j + 1, tmp_i)
 
+                    tmp_i := array.get(trade_closed_bar, j)
+                    array.set(trade_closed_bar, j, array.get(trade_closed_bar, j + 1))
+                    array.set(trade_closed_bar, j + 1, tmp_i)
+
                     bool tmp_b = array.get(kl_closed_logged, j)
                     array.set(kl_closed_logged, j, array.get(kl_closed_logged, j + 1))
                     array.set(kl_closed_logged, j + 1, tmp_b)
@@ -791,6 +815,7 @@ if barstate.isconfirmed
             array.pop(trade_target)
             array.pop(trade_ticks)
             array.pop(trade_entry_bar)
+            array.pop(trade_closed_bar)
             array.pop(kl_closed_logged)
 
 // ============================================================================
@@ -813,12 +838,13 @@ if array.size(kl_state) > 0
 
             if current_state == STATE_PROFIT or current_state == STATE_LOSS
                 int ts_closed = i < array.size(trade_state) ? array.get(trade_state, i) : na
-                bool trade_live = ts_closed == TE_STATE_OPEN or ts_closed == TE_STATE_CLOSED_WIN or ts_closed == TE_STATE_CLOSED_LOSS
+                bool trade_live = ts_closed == TE_STATE_OPEN
+                bool already_closed = i < array.size(trade_closed_bar) and not na(array.get(trade_closed_bar, i))
                 float entry_price = array.get(kl_entry_price, i)
                 float stop_price = array.get(kl_stop_price, i)
                 float target_price = array.get(kl_target_price, i)
                 bool has_exit = current_state == STATE_PROFIT ? not na(target_price) : not na(stop_price)
-                if trade_live and not na(entry_price) and not na(stop_price) and has_exit
+                if trade_live and not already_closed and not na(entry_price) and not na(stop_price) and has_exit
                     float exit_price = current_state == STATE_PROFIT ? target_price : stop_price
                     float ticks_val = side == "buy" ? (exit_price - entry_price) / syminfo.mintick : (entry_price - exit_price) / syminfo.mintick
                     finalize_close(i, current_state == STATE_PROFIT ? "Profit" : "Loss", ticks_val)
@@ -1227,6 +1253,7 @@ var table tbl_key = table.new(position=position.bottom_right, columns=9, rows=12
 var table tbl_trades = table.new(position=mobileCompact ? position.bottom_center : position.bottom_left, columns=mobileCompact ? 4 : 7, rows=mobileCompact ? 18 : 28, bgcolor=color.new(color.black, 80), border_width=1)
 var table tbl_flow = table.new(position=position.top_right, columns=mobileCompact ? 4 : 12, rows=mobileCompact ? 10 : 22, bgcolor=color.new(color.black, 80), border_width=1)
 var table tbl_mobile = table.new(position=position.bottom_center, columns=4, rows=16, bgcolor=color.new(color.black, 80), border_width=1)
+var table tbl_performance = table.new(position=position.top_left, columns=6, rows=20, bgcolor=color.new(color.black, 80), border_width=1)
 
 float closed_r_total = 0.0
 int closed_r_trades = 0
@@ -1242,8 +1269,82 @@ if closed_rr_count > 0
                 closed_r_wins += 1
 float closed_r_avg = closed_r_trades > 0 ? closed_r_total / closed_r_trades : na
 float closed_r_winrate = closed_r_trades > 0 ? (closed_r_wins * 100.0) / closed_r_trades : na
+float closed_tick_sum = 0.0
+int closed_trade_count = array.size(closed_ticks)
+int closed_tick_wins = 0
+if closed_trade_count > 0
+    for t_idx = 0 to closed_trade_count - 1
+        float t_val = array.get(closed_ticks, t_idx)
+        string res_val = t_idx < array.size(closed_result) ? array.get(closed_result, t_idx) : ""
+        if not na(t_val)
+            closed_tick_sum += t_val
+        if res_val == "Profit" or (not na(t_val) and t_val > 0)
+            closed_tick_wins += 1
+float closed_tick_avg = closed_trade_count > 0 ? closed_tick_sum / closed_trade_count : na
+float closed_tick_winrate = closed_trade_count > 0 ? (closed_tick_wins * 100.0) / closed_trade_count : na
 
 if barstate.islast and not mobileCompact
+    // Performance table for closed trades
+    table.cell(tbl_performance, 0, 0, "PERFORMANCE (CLOSED TRADES)", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
+    table.merge_cells(tbl_performance, 0, 0, 5, 0)
+
+    int perf_row = 1
+    table.cell(tbl_performance, 0, perf_row, "Trades", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 1, perf_row, "Wins", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 2, perf_row, "Win %", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 3, perf_row, "PnL (tks)", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 4, perf_row, "Avg Tks", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 5, perf_row, "Avg R", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+
+    perf_row += 1
+    string win_pct = na(closed_tick_winrate) ? "na" : str.tostring(closed_tick_winrate, "#.0") + "%"
+    string pnl_ticks = closed_trade_count > 0 ? str.tostring(math.round(closed_tick_sum), "+#;-#") : "na"
+    string avg_ticks = na(closed_tick_avg) ? "na" : str.tostring(closed_tick_avg, "#.0")
+    string avg_r = na(closed_r_avg) ? "na" : str.tostring(closed_r_avg, "#.0")
+    table.cell(tbl_performance, 0, perf_row, str.tostring(closed_trade_count), text_color=color.white, text_size=size.small, bgcolor=color.new(color.black, 85))
+    table.cell(tbl_performance, 1, perf_row, str.tostring(closed_tick_wins), text_color=color.white, text_size=size.small, bgcolor=color.new(color.black, 85))
+    table.cell(tbl_performance, 2, perf_row, win_pct, text_color=color.white, text_size=size.small, bgcolor=color.new(color.black, 85))
+    table.cell(tbl_performance, 3, perf_row, pnl_ticks, text_color=color.white, text_size=size.small, bgcolor=color.new(color.black, 85))
+    table.cell(tbl_performance, 4, perf_row, avg_ticks, text_color=color.white, text_size=size.small, bgcolor=color.new(color.black, 85))
+    table.cell(tbl_performance, 5, perf_row, avg_r, text_color=color.white, text_size=size.small, bgcolor=color.new(color.black, 85))
+
+    perf_row += 2
+    table.cell(tbl_performance, 0, perf_row, "CLOSED TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 70))
+    table.merge_cells(tbl_performance, 0, perf_row, 5, perf_row)
+
+    perf_row += 1
+    table.cell(tbl_performance, 0, perf_row, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 1, perf_row, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 2, perf_row, "Exit", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 3, perf_row, "Ticks", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 4, perf_row, "R", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 5, perf_row, "Result", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+
+    int max_perf_rows = 10
+    for row_idx = 0 to max_perf_rows - 1
+        int data_row = perf_row + 1 + row_idx
+        int rev_idx = array.size(closed_side) - 1 - row_idx
+        bool has_trade = rev_idx >= 0
+        color perf_bg = row_idx % 2 == 0 ? color.new(color.black, 90) : color.new(color.black, 80)
+        if has_trade
+            string s_side = array.get(closed_side, rev_idx)
+            float e_entry = array.get(closed_entry, rev_idx)
+            float exit_price = array.get(closed_result, rev_idx) == "Profit" ? array.get(closed_target, rev_idx) : array.get(closed_stop, rev_idx)
+            float ticks_val = array.get(closed_ticks, rev_idx)
+            float rr_val = array.get(closed_trade_rr, rev_idx)
+            string result_val = array.get(closed_result, rev_idx)
+
+            table.cell(tbl_performance, 0, data_row, s_side == "buy" ? "Buy" : "Sell", text_color=color.white, text_size=size.small, bgcolor=perf_bg)
+            table.cell(tbl_performance, 1, data_row, str.tostring(e_entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
+            table.cell(tbl_performance, 2, data_row, str.tostring(exit_price, format.mintick), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
+            table.cell(tbl_performance, 3, data_row, str.tostring(ticks_val, "+#.0;-#.0"), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
+            table.cell(tbl_performance, 4, data_row, na(rr_val) ? "na" : str.tostring(rr_val, "#.0"), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
+            table.cell(tbl_performance, 5, data_row, result_val, text_color=color.white, text_size=size.small, bgcolor=perf_bg)
+        else
+            color empty_bg = color.new(color.gray, 95)
+            for col = 0 to 5
+                table.cell(tbl_performance, col, data_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+
     table.cell(tbl_key, 0, 0, "KEY IMBALANCE LEVELS", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 50))
     table.merge_cells(tbl_key, 0, 0, 8, 0)
     
@@ -1417,11 +1518,7 @@ if barstate.islast and mobileCompact
     table.cell(tbl_mobile, 0, 5, setup_text, text_color=color.white, text_size=size.small, bgcolor=muted_bg)
     table.merge_cells(tbl_mobile, 0, 5, 3, 5)
 
-    float closed_tick_sum_mobile = 0.0
-    for idx = 0 to array.size(closed_ticks) - 1
-        float t_val = array.get(closed_ticks, idx)
-        if not na(t_val)
-            closed_tick_sum_mobile += t_val
+    float closed_tick_sum_mobile = closed_tick_sum
 
     table.cell(tbl_mobile, 0, 7, "Closed Ticks", text_color=color.white, text_size=size.small, bgcolor=section_bg)
     table.merge_cells(tbl_mobile, 0, 7, 2, 7)
@@ -1526,7 +1623,8 @@ if barstate.islast and not mobileCompact
             int ts_closed = array.get(trade_state, idx)
             bool is_closed = ts_closed == TE_STATE_CLOSED_WIN or ts_closed == TE_STATE_CLOSED_LOSS
             bool opened_once = idx < array.size(trade_opened) ? array.get(trade_opened, idx) : false
-            if is_closed and opened_once and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
+            bool already_closed = idx < array.size(trade_closed_bar) and not na(array.get(trade_closed_bar, idx))
+            if is_closed and opened_once and not already_closed and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
                 record_closed_trade(idx)
 
     // Table title
