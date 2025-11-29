@@ -1755,109 +1755,109 @@ else
 
 if showTables
     table.cell(tbl_key, 0, 0, "KEY IMBALANCE LEVELS", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 50))
-        table.merge_cells(tbl_key, 0, 0, 8, 0)
-
-        table.cell(tbl_key, 0, 1, "Range", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_key, 1, 1, "POC", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_key, 2, 1, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_key, 3, 1, "Peak", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_key, 4, 1, "Tier", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_key, 5, 1, "Score", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_key, 6, 1, "Status", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_key, 7, 1, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_key, 8, 1, "Tests", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-
-        int level_count = array.size(kl_poc)
-        int key_rows = mobileCompact ? 10 : 12
-        int key_data_rows = math.max(key_rows - 2, 0)
-        int display_count = math.min(level_count, key_data_rows)
-        var int[] kl_price_order = array.new_int()
-        var float[] kl_poc_buffer = array.new_float()
-        array.clear(kl_price_order)
-        array.clear(kl_poc_buffer)
-
-        // Build a descending-by-price ordering so rows stack from high to low
-        for i = 0 to level_count - 1
-            array.push(kl_poc_buffer, array.get(kl_poc, i))
-        for n = 0 to display_count - 1
-            int best_pos = -1
-            float best_val = na
-            for j = 0 to level_count - 1
-                float poc_val = array.get(kl_poc_buffer, j)
-                if not na(poc_val) and (na(best_val) or poc_val > best_val)
-                    best_val := poc_val
-                    best_pos := j
-            if best_pos >= 0
-                array.push(kl_price_order, best_pos)
-                array.set(kl_poc_buffer, best_pos, na)
-
-        for row = 0 to key_data_rows - 1
-            int data_row = row + 2
-            if row < display_count and row < array.size(kl_price_order)
-                int level_idx = array.get(kl_price_order, row)
-                float range_top = array.get(kl_range_top, level_idx)
-                float range_bottom = array.get(kl_range_bottom, level_idx)
-                float poc = array.get(kl_poc, level_idx)
-                string side = array.get(kl_side, level_idx)
-                float peak_ratio = array.get(kl_peak_ratio, level_idx)
-                string tier = array.get(kl_tier, level_idx)
-                float strength = array.get(kl_strength, level_idx)
-                string state = array.get(kl_state, level_idx)
-                int tests = array.get(kl_test_count, level_idx)
-                float rr = array.get(kl_rr_ratio, level_idx)
-
-                color side_color = side == "buy" ? col_buy : col_sell
-                color tier_bg = tier == TIER_EXTREME ? color.new(color.orange, 92) : tier == TIER_STRONG ? color.new(color.blue, 92) : color.new(color.black, 90)
-
-                color state_color = color.white
-                color row_bg = tier_bg
-
-                if state == STATE_HELD
-                    state_color := color.yellow
-                    row_bg := color.new(color.yellow, 90)
-                else if state == STATE_PROFIT
-                    state_color := color.lime
-                    row_bg := color.new(color.lime, 90)
-                else if state == STATE_ENTRY
-                    state_color := color.orange
-                    row_bg := color.new(color.orange, 90)
-                else if state == STATE_TESTING
-                    state_color := color.aqua
-                else if state == STATE_CLOSED
-                    state_color := color.silver
-                    row_bg := color.new(color.gray, 90)
-                // Losing trades are highlighted in red
-                else if state == STATE_LOSS
-                    state_color := color.red
-                    row_bg := color.new(color.red, 90)
-                else if state == STATE_ACTIVE
-                    state_color := color.white
-                // Rejected trades are grey
-                else if state == STATE_REJECTED
-                    state_color := color.gray
-                    row_bg := color.new(color.gray, 92)
-                else
-                    state_color := color.gray
-
-                string range_str = str.tostring(range_bottom, format.mintick) + "-" + str.tostring(range_top, format.mintick)
-                string rr_str = na(rr) ? "-" : str.tostring(rr, "#.#")
-                string side_label = side == "buy" ? "B" : "S"
-
-                table.cell(tbl_key, 0, data_row, range_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_key, 1, data_row, str.tostring(poc, format.mintick), text_color=side_color, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_key, 2, data_row, side_label, text_color=side_color, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_key, 3, data_row, str.tostring(peak_ratio, "#.#") + ":1", text_color=side_color, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_key, 4, data_row, tier, text_color=color.yellow, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_key, 5, data_row, str.tostring(math.round(strength)), text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                // Map internal state to a user-friendly status for display.  ACTIVE
-                // becomes blank (waiting), ENTRY becomes Ready, TESTING becomes
-                // Live, PROFIT ? Profit, HELD ? Held, LOSS ? Loss, REJECTED ? Rejected.
-                string display_state = ""
-                if state == STATE_ENTRY
-                    display_state := "Ready"
-                else if state == STATE_TESTING
-                    display_state := "Live"
-                else if state == STATE_PROFIT
+    table.merge_cells(tbl_key, 0, 0, 8, 0)
+    
+    table.cell(tbl_key, 0, 1, "Range", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 1, 1, "POC", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 2, 1, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 3, 1, "Peak", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 4, 1, "Tier", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 5, 1, "Score", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 6, 1, "Status", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 7, 1, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 8, 1, "Tests", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    
+    int level_count = array.size(kl_poc)
+    int key_rows = mobileCompact ? 10 : 12
+    int key_data_rows = math.max(key_rows - 2, 0)
+    int display_count = math.min(level_count, key_data_rows)
+    var int[] kl_price_order = array.new_int()
+    var float[] kl_poc_buffer = array.new_float()
+    array.clear(kl_price_order)
+    array.clear(kl_poc_buffer)
+    
+    // Build a descending-by-price ordering so rows stack from high to low
+    for i = 0 to level_count - 1
+        array.push(kl_poc_buffer, array.get(kl_poc, i))
+    for n = 0 to display_count - 1
+        int best_pos = -1
+        float best_val = na
+        for j = 0 to level_count - 1
+            float poc_val = array.get(kl_poc_buffer, j)
+            if not na(poc_val) and (na(best_val) or poc_val > best_val)
+                best_val := poc_val
+                best_pos := j
+        if best_pos >= 0
+            array.push(kl_price_order, best_pos)
+            array.set(kl_poc_buffer, best_pos, na)
+    
+    for row = 0 to key_data_rows - 1
+        int data_row = row + 2
+        if row < display_count and row < array.size(kl_price_order)
+            int level_idx = array.get(kl_price_order, row)
+            float range_top = array.get(kl_range_top, level_idx)
+            float range_bottom = array.get(kl_range_bottom, level_idx)
+            float poc = array.get(kl_poc, level_idx)
+            string side = array.get(kl_side, level_idx)
+            float peak_ratio = array.get(kl_peak_ratio, level_idx)
+            string tier = array.get(kl_tier, level_idx)
+            float strength = array.get(kl_strength, level_idx)
+            string state = array.get(kl_state, level_idx)
+            int tests = array.get(kl_test_count, level_idx)
+            float rr = array.get(kl_rr_ratio, level_idx)
+    
+            color side_color = side == "buy" ? col_buy : col_sell
+            color tier_bg = tier == TIER_EXTREME ? color.new(color.orange, 92) : tier == TIER_STRONG ? color.new(color.blue, 92) : color.new(color.black, 90)
+    
+            color state_color = color.white
+            color row_bg = tier_bg
+    
+            if state == STATE_HELD
+                state_color := color.yellow
+                row_bg := color.new(color.yellow, 90)
+            else if state == STATE_PROFIT
+                state_color := color.lime
+                row_bg := color.new(color.lime, 90)
+            else if state == STATE_ENTRY
+                state_color := color.orange
+                row_bg := color.new(color.orange, 90)
+            else if state == STATE_TESTING
+                state_color := color.aqua
+            else if state == STATE_CLOSED
+                state_color := color.silver
+                row_bg := color.new(color.gray, 90)
+            // Losing trades are highlighted in red
+            else if state == STATE_LOSS
+                state_color := color.red
+                row_bg := color.new(color.red, 90)
+            else if state == STATE_ACTIVE
+                state_color := color.white
+            // Rejected trades are grey
+            else if state == STATE_REJECTED
+                state_color := color.gray
+                row_bg := color.new(color.gray, 92)
+            else
+                state_color := color.gray
+    
+            string range_str = str.tostring(range_bottom, format.mintick) + "-" + str.tostring(range_top, format.mintick)
+            string rr_str = na(rr) ? "-" : str.tostring(rr, "#.#")
+            string side_label = side == "buy" ? "B" : "S"
+    
+            table.cell(tbl_key, 0, data_row, range_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 1, data_row, str.tostring(poc, format.mintick), text_color=side_color, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 2, data_row, side_label, text_color=side_color, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 3, data_row, str.tostring(peak_ratio, "#.#") + ":1", text_color=side_color, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 4, data_row, tier, text_color=color.yellow, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 5, data_row, str.tostring(math.round(strength)), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+            // Map internal state to a user-friendly status for display.  ACTIVE
+            // becomes blank (waiting), ENTRY becomes Ready, TESTING becomes
+            // Live, PROFIT ? Profit, HELD ? Held, LOSS ? Loss, REJECTED ? Rejected.
+            string display_state = ""
+            if state == STATE_ENTRY
+                display_state := "Ready"
+            else if state == STATE_TESTING
+                display_state := "Live"
+            else if state == STATE_PROFIT
                     display_state := "Profit"
                 else if state == STATE_HELD
                     display_state := "Held"
