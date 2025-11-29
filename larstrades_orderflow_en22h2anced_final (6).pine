@@ -237,6 +237,9 @@ var line[] trade_visual_entry_lines = array.new_line()
 var box[] trade_visual_risk_boxes = array.new_box()
 var box[] trade_visual_reward_boxes = array.new_box()
 
+f_safe_get(arr, int idx) =>
+    idx >= 0 and idx < array.size(arr) ? array.get(arr, idx) : na
+
 // Trade lifecycle state machine
 type Trade
     int id
@@ -293,18 +296,24 @@ find_trade_visual_index(int id) =>
     found
 
 clear_trade_visuals() =>
-    for i = 0 to array.size(trade_visual_entry_lines) - 1
-        line ln = array.get(trade_visual_entry_lines, i)
-        if not na(ln)
-            line.delete(ln)
-    for i = 0 to array.size(trade_visual_risk_boxes) - 1
-        box bx = array.get(trade_visual_risk_boxes, i)
-        if not na(bx)
-            box.delete(bx)
-    for i = 0 to array.size(trade_visual_reward_boxes) - 1
-        box bx = array.get(trade_visual_reward_boxes, i)
-        if not na(bx)
-            box.delete(bx)
+    int entry_count = array.size(trade_visual_entry_lines)
+    if entry_count > 0
+        for i = entry_count - 1 to 0
+            line ln = f_safe_get(trade_visual_entry_lines, i)
+            if not na(ln)
+                line.delete(ln)
+    int risk_count = array.size(trade_visual_risk_boxes)
+    if risk_count > 0
+        for i = risk_count - 1 to 0
+            box bx = f_safe_get(trade_visual_risk_boxes, i)
+            if not na(bx)
+                box.delete(bx)
+    int reward_count = array.size(trade_visual_reward_boxes)
+    if reward_count > 0
+        for i = reward_count - 1 to 0
+            box bx = f_safe_get(trade_visual_reward_boxes, i)
+            if not na(bx)
+                box.delete(bx)
     array.clear(trade_visual_ids)
     array.clear(trade_visual_entry_lines)
     array.clear(trade_visual_risk_boxes)
