@@ -412,6 +412,8 @@ record_closed_trade(int idx) =>
         array.set(kl_closed_logged, idx, true)
 
 finalize_close(int idx, string outcome, float ticks_val) =>
+    if idx < 0 or idx >= array.size(trade_state) or array.get(trade_state, idx) != TE_STATE_OPEN
+        return
     // Skip if already logged or index is out of sync
     bool base_loggable = idx >= 0 and idx < array.size(kl_state) and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
     int ts = idx >= 0 and idx < array.size(trade_state) ? array.get(trade_state, idx) : na
@@ -680,7 +682,8 @@ reject_trade_for_level(int kl_idx) =>
 
 close_open_trade(int kl_idx, float exit_price, string outcome) =>
     int idx_open = find_trade_index(trades_open, kl_idx)
-    if idx_open != -1
+    int ts_open = kl_idx >= 0 and kl_idx < array.size(trade_state) ? array.get(trade_state, kl_idx) : na
+    if idx_open != -1 and ts_open == TE_STATE_OPEN
         Trade t = array.get(trades_open, idx_open)
         array.remove(trades_open, idx_open)
         t.status := "closed"
