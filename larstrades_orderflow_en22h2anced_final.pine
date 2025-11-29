@@ -372,7 +372,7 @@ find_next_target(int current_idx, string current_side) =>
 
 // Create a trade for a given key level index using the unified swing + ATR stop
 // model and RR-banded target selection. Returns true on success.
-bool create_trade_for_level(int idx) =>
+create_trade_for_level(int idx) =>
     string side = array.get(kl_side, idx)
     float poc = array.get(kl_poc, idx)
 
