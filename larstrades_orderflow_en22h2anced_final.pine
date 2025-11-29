@@ -386,6 +386,9 @@ bool create_trade_for_level(int idx) =>
         else
             swingPrice := side == "buy" ? ta.lowest(low, swingLookback) : ta.highest(high, swingLookback)
 
+        if na(storedSwing) and not na(swingPrice)
+            array.set(kl_swing_price, idx, swingPrice)
+
         if na(swingPrice)
             false
         else
@@ -525,7 +528,12 @@ if barstate.isconfirmed
                             float peak_ratio = array.get(kl_peak_ratio, j)
                             float new_strength = (total_delta * peak_ratio) / 100
                             array.set(kl_strength, j, new_strength)
-                            
+
+                            // Seed a reference swing for this level if it has not been captured yet
+                            if na(array.get(kl_swing_price, j))
+                                float swing_ref_existing = side == "buy" ? ta.lowest(low, swingLookback) : ta.highest(high, swingLookback)
+                                array.set(kl_swing_price, j, swing_ref_existing)
+
                             array.set(kl_origin_bar, j, bar_index)
                             merged := true
                             break
