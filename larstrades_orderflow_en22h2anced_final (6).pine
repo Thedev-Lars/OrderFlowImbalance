@@ -423,40 +423,41 @@ record_closed_trade(int idx) =>
         array.set(kl_closed_logged, idx, true)
 
 finalize_close(int idx, string outcome, float ticks_val) =>
-    if idx < 0 or idx >= array.size(trade_state) or array.get(trade_state, idx) != TE_STATE_OPEN
-        return
-    // Skip if already logged or index is out of sync
-    bool base_loggable = idx >= 0 and idx < array.size(kl_state) and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
-    int ts = idx >= 0 and idx < array.size(trade_state) ? array.get(trade_state, idx) : na
-    bool trade_live = ts == TE_STATE_OPEN
-    bool trade_entered = idx >= 0 and idx < array.size(trade_opened) ? array.get(trade_opened, idx) : false
-    bool has_prices = idx < array.size(kl_entry_price) and idx < array.size(kl_stop_price) and not na(array.get(kl_entry_price, idx)) and not na(array.get(kl_stop_price, idx))
-    bool already_closed = idx < array.size(trade_closed_bar) and not na(array.get(trade_closed_bar, idx))
-    bool loggable = base_loggable and trade_live and trade_entered and has_prices and not already_closed
-    if loggable
-        array.set(kl_realized_ticks, idx, ticks_val)
-        array.set(kl_outcome, idx, outcome)
-        array.set(kl_state, idx, STATE_CLOSED)
-        if idx < array.size(trade_state)
-            array.set(trade_state, idx, outcome == "Profit" ? TE_STATE_CLOSED_WIN : TE_STATE_CLOSED_LOSS)
-        array.set(kl_last_test_bar, idx, bar_index)
-        if idx < array.size(trade_closed_bar)
-            array.set(trade_closed_bar, idx, bar_index)
-        record_closed_trade(idx)
+    bool eligible_close = not (idx < 0 or idx >= array.size(trade_state) or array.get(trade_state, idx) != TE_STATE_OPEN)
+    if eligible_close
+        // Skip if already logged or index is out of sync
+        bool base_loggable = idx >= 0 and idx < array.size(kl_state) and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
+        int ts = idx >= 0 and idx < array.size(trade_state) ? array.get(trade_state, idx) : na
+        bool trade_live = ts == TE_STATE_OPEN
+        bool trade_entered = idx >= 0 and idx < array.size(trade_opened) ? array.get(trade_opened, idx) : false
+        bool has_prices = idx < array.size(kl_entry_price) and idx < array.size(kl_stop_price) and not na(array.get(kl_entry_price, idx)) and not na(array.get(kl_stop_price, idx))
+        bool already_closed = idx < array.size(trade_closed_bar) and not na(array.get(trade_closed_bar, idx))
+        bool loggable = base_loggable and trade_live and trade_entered and has_prices and not already_closed
+        if loggable
+            array.set(kl_realized_ticks, idx, ticks_val)
+            array.set(kl_outcome, idx, outcome)
+            array.set(kl_state, idx, STATE_CLOSED)
+            if idx < array.size(trade_state)
+                array.set(trade_state, idx, outcome == "Profit" ? TE_STATE_CLOSED_WIN : TE_STATE_CLOSED_LOSS)
+            array.set(kl_last_test_bar, idx, bar_index)
+            if idx < array.size(trade_closed_bar)
+                array.set(trade_closed_bar, idx, bar_index)
+            record_closed_trade(idx)
 
-        // Draw a persistent closed-trade box from entry to exit
-        float entry_price = array.get(kl_entry_price, idx)
-        float exit_price = outcome == "Profit" ? array.get(kl_target_price, idx) : array.get(kl_stop_price, idx)
-        int entry_bar_idx = idx < array.size(trade_entry_bar) and not na(array.get(trade_entry_bar, idx)) ? array.get(trade_entry_bar, idx) : bar_index
-        float top = math.max(entry_price, exit_price)
-        float bottom = math.min(entry_price, exit_price)
-        color box_col = color.new(color.white, closedTradeBoxOpacity)
-        box closed_box = box.new(left=entry_bar_idx, top=top, right=bar_index + 1, bottom=bottom, border_color=box_col, bgcolor=box_col, border_width=1)
-        array.push(closed_trade_boxes, closed_box)
+            // Draw a persistent closed-trade box from entry to exit
+            float entry_price = array.get(kl_entry_price, idx)
+            float exit_price = outcome == "Profit" ? array.get(kl_target_price, idx) : array.get(kl_stop_price, idx)
+            int entry_bar_idx = idx < array.size(trade_entry_bar) and not na(array.get(trade_entry_bar, idx)) ? array.get(trade_entry_bar, idx) : bar_index
+            float top = math.max(entry_price, exit_price)
+            float bottom = math.min(entry_price, exit_price)
+            color box_col = color.new(color.white, closedTradeBoxOpacity)
+            box closed_box = box.new(left=entry_bar_idx, top=top, right=bar_index + 1, bottom=bottom, border_color=box_col, bgcolor=box_col, border_width=1)
+            array.push(closed_trade_boxes, closed_box)
 
-        int max_closed_boxes = 60
-        if array.size(closed_trade_boxes) > max_closed_boxes
-            box.delete(array.shift(closed_trade_boxes))
+            int max_closed_boxes = 60
+            if array.size(closed_trade_boxes) > max_closed_boxes
+                box.delete(array.shift(closed_trade_boxes))
+    eligible_close
 
 find_trade_index(Trade[] arr, int kl_idx) =>
     int found = -1
@@ -467,20 +468,22 @@ find_trade_index(Trade[] arr, int kl_idx) =>
             if t.kl_id == kl_idx
                 found := i
                 break
-    return found
+    found
 
 has_open_trade() =>
+    bool found_open = false
     int n = array.size(trade_state)
     if n > 0
         for j = 0 to n - 1
             if array.get(trade_state, j) == TE_STATE_OPEN
-                return true
-    return false
+                found_open := true
+                break
+    found_open
 
 log_timeline(string event, string dir, float entry, float stop, float take, float pnlTicks, float rr) =>
     TimelineEvent ev = TimelineEvent.new(bar_index, event, dir, entry, stop, take, pnlTicks, rr)
     array.push(timeline, ev)
-    return ev
+    ev
 
 swap_trade_indices(int a, int b) =>
     Trade[] arr_ref = trades_set
@@ -667,24 +670,25 @@ register_set_trade(int kl_idx, int seq) =>
     updated_seq
 
 open_trade_for_level(int kl_idx) =>
-    if has_open_trade()
-        return
-    int idx_set = find_trade_index(trades_set, kl_idx)
-    if idx_set != -1
-        Trade t = array.get(trades_set, idx_set)
-        array.remove(trades_set, idx_set)
-        t.status := "open"
-        array.push(trades_open, t)
-        log_timeline("Trade OPEN", t.direction == 1 ? "Buy" : "Sell", t.entry, t.stop, t.take, na, na)
-        if kl_idx < array.size(trade_state)
-            array.set(trade_state, kl_idx, TE_STATE_OPEN)
-        if kl_idx < array.size(trade_opened)
-            array.set(trade_opened, kl_idx, true)
-        if kl_idx < array.size(trade_entry_bar)
-            array.set(trade_entry_bar, kl_idx, bar_index)
-        if kl_idx < array.size(kl_state)
-            array.set(kl_state, kl_idx, STATE_TESTING)
-            array.set(kl_last_test_bar, kl_idx, bar_index)
+    bool can_open = not has_open_trade()
+    if can_open
+        int idx_set = find_trade_index(trades_set, kl_idx)
+        if idx_set != -1
+            Trade t = array.get(trades_set, idx_set)
+            array.remove(trades_set, idx_set)
+            t.status := "open"
+            array.push(trades_open, t)
+            log_timeline("Trade OPEN", t.direction == 1 ? "Buy" : "Sell", t.entry, t.stop, t.take, na, na)
+            if kl_idx < array.size(trade_state)
+                array.set(trade_state, kl_idx, TE_STATE_OPEN)
+            if kl_idx < array.size(trade_opened)
+                array.set(trade_opened, kl_idx, true)
+            if kl_idx < array.size(trade_entry_bar)
+                array.set(trade_entry_bar, kl_idx, bar_index)
+            if kl_idx < array.size(kl_state)
+                array.set(kl_state, kl_idx, STATE_TESTING)
+                array.set(kl_last_test_bar, kl_idx, bar_index)
+    can_open
 
 reject_trade_for_level(int kl_idx) =>
     int idx_set = find_trade_index(trades_set, kl_idx)
