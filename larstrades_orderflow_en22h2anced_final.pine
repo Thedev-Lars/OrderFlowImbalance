@@ -581,6 +581,17 @@ if barstate.isconfirmed
                 array.push(trade_target, na)
                 array.push(trade_ticks, na)
                 array.push(trade_entry_bar, na)
+
+                // Immediately build a trade setup for this new key level.
+                // This uses the unified swing+ATR stop and RR-banded target logic.
+                int new_idx = array.size(kl_state) - 1
+
+                bool created_setup = create_trade_for_level(new_idx)
+
+                // If creation failed (no valid swing, zero risk, etc), leave the level in STATE_ACTIVE
+                // with empty prices so that the ACTIVE → ENTRY logic can try again on a later touch.
+                if not created_setup
+                    array.set(kl_last_test_bar, new_idx, bar_index)
     
     // Sort by tier then strength
     if array.size(kl_strength) > 1
@@ -814,33 +825,37 @@ if array.size(kl_state) > 0
 
             // ACTIVE → ENTRY (find valid trade setup)
             else if current_state == STATE_ACTIVE
-                bool touching = (low <= range_top) and (high >= range_bottom)
-                if touching
-                    array.set(trade_state, i, TE_STATE_ACTIVE)
-                    // Evaluate trade filters
-                    // Compute the imbalance ratio and total volume for this level
-                    float ratio_i = array.get(kl_peak_ratio, i)
-                    float totalVol = array.get(kl_poc_volume, i)
-                    // Estimate opposing volume: for buy levels ratio = buy/sell, so sellVol ≈ totalVol/(1+ratio).
-                    // For sell levels ratio = sell/buy, so buyVol ≈ totalVol/(1+ratio).
-                    float opposingVol = totalVol / (1 + ratio_i)
-                    float opposingPct = totalVol > 0 ? opposingVol / totalVol : 1.0
-                    bool opposition_ok = opposingPct <= maxOpposingPct or ratio_i >= imbalanceRatio
-                    bool trendAlign = not trendFilterEnabled or ((side == "buy" and trendDir == "up") or (side == "sell" and trendDir == "down"))
-                    bool extremeLevel = ratio_i >= extremeRatio
-                    // A level passes the filter if it aligns with the prevailing trend
-                    // and either meets the opposing-volume threshold or already clears
-                    // the baseline imbalance ratio. Extreme tiers still override both.
-                    bool passFilter = not trendFilterEnabled or (trendAlign and (opposition_ok or extremeLevel)) or extremeLevel
+                // Only attempt to create a setup if we do not already have entry/stop/target prices from initial creation.
+                bool has_setup = i < array.size(kl_entry_price) and not na(array.get(kl_entry_price, i))
 
-                    if passFilter
-                        // Use the unified swing+ATR stop and RR-banded targeting helper
-                        bool created = create_trade_for_level(i)
-                        if not created
+                if not has_setup
+                    bool touching = (low <= range_top) and (high >= range_bottom)
+                    if touching
+                        array.set(trade_state, i, TE_STATE_ACTIVE)
+                        // Evaluate trade filters
+                        // Compute the imbalance ratio and total volume for this level
+                        float ratio_i = array.get(kl_peak_ratio, i)
+                        float totalVol = array.get(kl_poc_volume, i)
+                        // Estimate opposing volume: for buy levels ratio = buy/sell, so sellVol ≈ totalVol/(1+ratio).
+                        // For sell levels ratio = sell/buy, so buyVol ≈ totalVol/(1+ratio).
+                        float opposingVol = totalVol / (1 + ratio_i)
+                        float opposingPct = totalVol > 0 ? opposingVol / totalVol : 1.0
+                        bool opposition_ok = opposingPct <= maxOpposingPct or ratio_i >= imbalanceRatio
+                        bool trendAlign = not trendFilterEnabled or ((side == "buy" and trendDir == "up") or (side == "sell" and trendDir == "down"))
+                        bool extremeLevel = ratio_i >= extremeRatio
+                        // A level passes the filter if it aligns with the prevailing trend
+                        // and either meets the opposing-volume threshold or already clears
+                        // the baseline imbalance ratio. Extreme tiers still override both.
+                        bool passFilter = not trendFilterEnabled or (trendAlign and (opposition_ok or extremeLevel)) or extremeLevel
+
+                        if passFilter
+                            // Use the unified swing+ATR stop and RR-banded targeting helper
+                            bool created = create_trade_for_level(i)
+                            if not created
+                                array.set(kl_last_test_bar, i, bar_index)
+                        else
+                            // Filters not satisfied – remain ACTIVE and record touch
                             array.set(kl_last_test_bar, i, bar_index)
-                    else
-                        // Filters not satisfied – remain ACTIVE and record touch
-                        array.set(kl_last_test_bar, i, bar_index)
             
             // ENTRY → TESTING (trade is live)
             else if current_state == STATE_ENTRY
