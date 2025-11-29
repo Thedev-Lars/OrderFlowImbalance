@@ -455,6 +455,14 @@ find_trade_index(Trade[] arr, int kl_idx) =>
                 break
     found
 
+has_open_trade() =>
+    int n = array.size(trade_state)
+    if n > 0
+        for j = 0 to n - 1
+            if array.get(trade_state, j) == TE_STATE_OPEN
+                return true
+    false
+
 log_timeline(string event, string dir, float entry, float stop, float take, float pnlTicks, float rr) =>
     TimelineEvent ev = TimelineEvent.new(bar_index, event, dir, entry, stop, take, pnlTicks, rr)
     array.push(timeline, ev)
@@ -640,6 +648,8 @@ register_set_trade(int kl_idx, int seq) =>
     updated_seq
 
 open_trade_for_level(int kl_idx) =>
+    if has_open_trade()
+        return
     int idx_set = find_trade_index(trades_set, kl_idx)
     if idx_set != -1
         Trade t = array.get(trades_set, idx_set)
@@ -1245,7 +1255,7 @@ if array.size(kl_state) > 0
                 bool has_prices = not na(entry_price) and i < array.size(kl_stop_price) and not na(array.get(kl_stop_price, i)) and i < array.size(kl_target_price) and not na(array.get(kl_target_price, i))
                 bool triggered = has_prices and (side == "buy" ? (low <= entry_price) : (high >= entry_price))
 
-                if triggered
+                if triggered and not has_open_trade()
                     open_trade_for_level(i)
                     process_open_trade_bar(i, side)
 
