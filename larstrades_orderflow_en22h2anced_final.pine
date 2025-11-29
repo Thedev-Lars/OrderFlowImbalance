@@ -1242,20 +1242,42 @@ if barstate.islast and not mobileCompact
     table.cell(tbl_key, 7, 1, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
     table.cell(tbl_key, 8, 1, "Tests", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
     
-    int display_count = math.min(array.size(kl_poc), 10)
+    int level_count = array.size(kl_poc)
+    int display_count = math.min(level_count, 10)
+    var int[] kl_price_order = array.new_int()
+    var float[] kl_poc_buffer = array.new_float()
+    array.clear(kl_price_order)
+    array.clear(kl_poc_buffer)
+
+    // Build a descending-by-price ordering so rows stack from high to low
+    for i = 0 to level_count - 1
+        array.push(kl_poc_buffer, array.get(kl_poc, i))
+    for n = 0 to display_count - 1
+        int best_pos = -1
+        float best_val = na
+        for j = 0 to level_count - 1
+            float poc_val = array.get(kl_poc_buffer, j)
+            if not na(poc_val) and (na(best_val) or poc_val > best_val)
+                best_val := poc_val
+                best_pos := j
+        if best_pos >= 0
+            array.push(kl_price_order, best_pos)
+            array.set(kl_poc_buffer, best_pos, na)
+
     for row = 0 to 9
         int data_row = row + 2
-        if row < display_count
-            float range_top = array.get(kl_range_top, row)
-            float range_bottom = array.get(kl_range_bottom, row)
-            float poc = array.get(kl_poc, row)
-            string side = array.get(kl_side, row)
-            float peak_ratio = array.get(kl_peak_ratio, row)
-            string tier = array.get(kl_tier, row)
-            float strength = array.get(kl_strength, row)
-            string state = array.get(kl_state, row)
-            int tests = array.get(kl_test_count, row)
-            float rr = array.get(kl_rr_ratio, row)
+        if row < display_count and row < array.size(kl_price_order)
+            int level_idx = array.get(kl_price_order, row)
+            float range_top = array.get(kl_range_top, level_idx)
+            float range_bottom = array.get(kl_range_bottom, level_idx)
+            float poc = array.get(kl_poc, level_idx)
+            string side = array.get(kl_side, level_idx)
+            float peak_ratio = array.get(kl_peak_ratio, level_idx)
+            string tier = array.get(kl_tier, level_idx)
+            float strength = array.get(kl_strength, level_idx)
+            string state = array.get(kl_state, level_idx)
+            int tests = array.get(kl_test_count, level_idx)
+            float rr = array.get(kl_rr_ratio, level_idx)
             
             color side_color = side == "buy" ? col_buy : col_sell
             color tier_bg = tier == TIER_EXTREME ? color.new(color.orange, 92) : tier == TIER_STRONG ? color.new(color.blue, 92) : color.new(color.black, 90)
