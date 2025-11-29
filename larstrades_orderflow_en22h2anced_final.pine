@@ -1515,10 +1515,8 @@ if barstate.islast and not mobileCompact
         current_row += 1
 
     // ---------------------------------------------------------------------
-    // Unified trades table showing possible (ENTRY), open (TESTING) and closed trades.
+    // Unified trades table showing possible (ENTRY) and open (TESTING) trades only.
     int total_levels = array.size(kl_state)
-    float closed_tick_sum = 0.0
-    int closed_tick_count = array.size(closed_ticks)
     int trades_rows = mobileCompact ? 18 : 28
     int last_trade_row = trades_rows - 1
 
@@ -1530,12 +1528,6 @@ if barstate.islast and not mobileCompact
             bool opened_once = idx < array.size(trade_opened) ? array.get(trade_opened, idx) : false
             if is_closed and opened_once and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
                 record_closed_trade(idx)
-
-    if closed_tick_count > 0
-        for i_close = 0 to closed_tick_count - 1
-            float tick_val = array.get(closed_ticks, i_close)
-            if not na(tick_val)
-                closed_tick_sum += tick_val
 
     // Table title
     table.cell(tbl_trades, 0, 0, "TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
@@ -1584,63 +1576,8 @@ if barstate.islast and not mobileCompact
     for r = t_row to possible_fill_end
         for c = 0 to 6
             table.cell(tbl_trades, c, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
-    t_row := max_p + 3
-
-    // Closed trades section with total tick summary
-    table.cell(tbl_trades, 0, t_row, "CLOSED TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 70))
-    table.merge_cells(tbl_trades, 0, t_row, 6, t_row)
-    t_row += 1
-    table.cell(tbl_trades, 0, t_row, "Total Ticks", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
-    table.merge_cells(tbl_trades, 0, t_row, 4, t_row)
-    table.cell(tbl_trades, 5, t_row, str.tostring(math.round(closed_tick_sum), "+#;-#"), text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
-    table.cell(tbl_trades, 6, t_row, "", bgcolor=color.new(color.gray, 75))
-    t_row += 1
-    string avg_r_str = na(closed_r_avg) ? "na" : str.tostring(closed_r_avg, "#.0")
-    string win_r_str = na(closed_r_winrate) ? "na" : str.tostring(closed_r_winrate, "#") + "%"
-    table.cell(tbl_trades, 0, t_row, "Closed R | Avg R | Win%", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
-    table.merge_cells(tbl_trades, 0, t_row, 4, t_row)
-    table.cell(tbl_trades, 5, t_row, str.tostring(closed_r_total, "+#.0;-#.0") + " | " + avg_r_str + " | " + win_r_str, text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
-    table.cell(tbl_trades, 6, t_row, "", bgcolor=color.new(color.gray, 75))
-    t_row += 1
-    table.cell(tbl_trades, 0, t_row, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_trades, 1, t_row, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_trades, 2, t_row, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_trades, 3, t_row, "Target", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_trades, 4, t_row, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_trades, 5, t_row, "Ticks", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_trades, 6, t_row, "Result", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    t_row += 1
-
-    int max_c = 8
-    int closed_count = array.size(closed_side)
-    if closed_count > 0
-        // Render newest closed trades first so recent results appear at the top
-        for offset = 0 to closed_count - 1
-            if t_row < trades_rows
-                int idx = closed_count - 1 - offset
-                string s_side3 = array.get(closed_side, idx)
-                float e_entry3 = array.get(closed_entry, idx)
-                float e_stop3 = array.get(closed_stop, idx)
-                float e_target3 = array.get(closed_target, idx)
-                float e_rr3 = array.get(closed_rr, idx)
-                float ticks_val = array.get(closed_ticks, idx)
-                string result_str = array.get(closed_result, idx)
-                string side_str3 = s_side3 == "buy" ? "Buy" : "Sell"
-                string ticks_str = na(ticks_val) ? "-" : str.tostring(math.round(ticks_val), "+#;-#")
-                string rr_str3 = na(e_rr3) ? "-" : str.tostring(e_rr3, "#.#")
-                color row_bg4 = s_side3 == "buy" ? color.new(col_buy, 90) : color.new(col_sell, 90)
-                color side_color4 = s_side3 == "buy" ? col_buy : col_sell
-                table.cell(tbl_trades, 0, t_row, side_str3, text_color=side_color4, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_trades, 1, t_row, str.tostring(e_entry3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_trades, 2, t_row, str.tostring(e_stop3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_trades, 3, t_row, str.tostring(e_target3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_trades, 4, t_row, rr_str3, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_trades, 5, t_row, ticks_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_trades, 6, t_row, result_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                t_row += 1
-    int fill_start_row = math.min(t_row, last_trade_row)
-    int fill_end_row = math.min(last_trade_row, t_row + max_c)
-    for r = fill_start_row to fill_end_row
+    int fill_start_row = math.min(possible_fill_end + 1, last_trade_row)
+    for r = fill_start_row to last_trade_row
         for col = 0 to 6
             table.cell(tbl_trades, col, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
     
