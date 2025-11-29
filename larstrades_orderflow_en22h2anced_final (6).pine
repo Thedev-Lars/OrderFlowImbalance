@@ -722,13 +722,14 @@ find_next_target(int current_idx, string current_side) =>
     target
 
 // Create a trade for a given key level index using the unified swing + ATR stop
-// model and RR-banded target selection. Returns true on success.
-create_trade_for_level(int idx) =>
+// model and RR-banded target selection. Returns the updated trade sequence value.
+create_trade_for_level(int idx, int seq) =>
+    int seq_out = seq
     string side = array.get(kl_side, idx)
     float poc = array.get(kl_poc, idx)
 
     if na(side)
-        false
+        seq_out
     else
         float storedSwing = array.get(kl_swing_price, idx)
         float swingPrice = na
@@ -741,7 +742,7 @@ create_trade_for_level(int idx) =>
             array.set(kl_swing_price, idx, swingPrice)
 
         if na(swingPrice)
-            false
+            seq_out
         else
             float swingDistTicks = math.abs(poc - swingPrice) / syminfo.mintick
             float atrTicks = atr / syminfo.mintick
@@ -751,7 +752,7 @@ create_trade_for_level(int idx) =>
             float risk = math.abs(poc - stop)
 
             if risk <= 0
-                false
+                seq_out
             else
                 float level_target = find_next_target(idx, side)
 
@@ -789,9 +790,9 @@ create_trade_for_level(int idx) =>
                 array.set(trade_target, idx, target_to_use)
                 array.set(trade_ticks, idx, na)
 
-                trade_seq := register_set_trade(idx, trade_seq)
+                seq_out := register_set_trade(idx, seq_out)
 
-                true
+                seq_out
 
 // ============================================================================
 // IMBALANCE DETECTION
@@ -931,7 +932,9 @@ if barstate.isconfirmed
                 // This uses the unified swing+ATR stop and RR-banded target logic.
                 int new_idx = array.size(kl_state) - 1
 
-                bool created_setup = create_trade_for_level(new_idx)
+                int updated_seq = create_trade_for_level(new_idx, trade_seq)
+                bool created_setup = updated_seq != trade_seq
+                trade_seq := updated_seq
 
                 float kl_entry = new_idx < array.size(kl_entry_price) ? array.get(kl_entry_price, new_idx) : na
                 float kl_stop = new_idx < array.size(kl_stop_price) ? array.get(kl_stop_price, new_idx) : na
@@ -1208,7 +1211,9 @@ if array.size(kl_state) > 0
 
                     if passFilter
                         // Use the unified swing+ATR stop and RR-banded targeting helper
-                        bool created = create_trade_for_level(i)
+                        int seq_after_create = create_trade_for_level(i, trade_seq)
+                        bool created = seq_after_create != trade_seq
+                        trade_seq := seq_after_create
                         if not created
                             array.set(kl_last_test_bar, i, bar_index)
                     else
@@ -1239,7 +1244,9 @@ if array.size(kl_state) > 0
                 bool touching_again = (low <= range_top) and (high >= range_bottom)
                 if touching_again and (bar_index > last_test + 3)
                     // Retouch entries share the same stop/target sizing as first touches
-                    bool created = create_trade_for_level(i)
+                    int seq_after_create = create_trade_for_level(i, trade_seq)
+                    bool created = seq_after_create != trade_seq
+                    trade_seq := seq_after_create
                     if not created
                         array.set(kl_last_test_bar, i, bar_index)
 
@@ -1248,7 +1255,9 @@ if array.size(kl_state) > 0
                 bool touching_again = (low <= range_top) and (high >= range_bottom)
                 if touching_again and (bar_index > last_test + 3)
                     // Re-engage held levels with the unified trade creation rules
-                    bool created = create_trade_for_level(i)
+                    int seq_after_create = create_trade_for_level(i, trade_seq)
+                    bool created = seq_after_create != trade_seq
+                    trade_seq := seq_after_create
                     if not created
                         array.set(kl_last_test_bar, i, bar_index)
 
@@ -1493,9 +1502,9 @@ else
         Trade t = array.get(trades_closed, i)
         ensure_trade_visual(t, "closed")
 
-f_clear(tbl) =>
+f_clear(table tbl, int cols, int rows) =>
     if not na(tbl)
-        table.clear(tbl)
+        table.clear(tbl, 0, 0, cols - 1, rows - 1)
 
 // ============================================================================
 // TABLES
@@ -1506,7 +1515,7 @@ var table tbl_trades = na
 var table tbl_performance = na
 var table tbl_flow = na
 var table tbl_timeline = na
-var bool table_mobile_mode = na
+var bool table_mobile_mode = false
 
 delete_tables() =>
     if not na(tbl_key)
@@ -1774,8 +1783,8 @@ if showTables
                     table.cell(tbl_key, col, data_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
 
     if barstate.islast and mobileCompact
-        f_clear(tbl_flow)
-        f_clear(tbl_performance)
+        f_clear(tbl_flow, 12, 22)
+        f_clear(tbl_performance, 6, 20)
 
         color header_bg = color.new(color.gray, 40)
         color section_bg = color.new(color.gray, 70)
