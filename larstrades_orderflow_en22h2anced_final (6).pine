@@ -253,6 +253,18 @@ var Trade[] trades_open = array.new<Trade>()
 var Trade[] trades_closed = array.new<Trade>()
 var int trade_seq = 0
 
+type TimelineEvent
+    int bar
+    string event
+    string dir
+    float entry
+    float stop
+    float take
+    float pnlTicks
+    float rr
+
+var TimelineEvent[] timeline = array.new<TimelineEvent>()
+
 var bool perfResetLatched = false
 
 // Session management
@@ -432,6 +444,10 @@ find_trade_index(Trade[] arr, int kl_idx) =>
             break
     found
 
+log_timeline(string event, string dir, float entry, float stop, float take, float pnlTicks, float rr) =>
+    TimelineEvent ev = TimelineEvent.new(bar_index, event, dir, entry, stop, take, pnlTicks, rr)
+    array.push(timeline, ev)
+
 swap_trade_indices(int a, int b) =>
     Trade[] arr_ref = trades_set
     for i = 0 to array.size(arr_ref) - 1
@@ -589,6 +605,7 @@ register_set_trade(int kl_idx) =>
                 t.pnlTicks := na
                 if existing_set == -1
                     array.push(trades_set, t)
+                    log_timeline("Trade SET", side == "buy" ? "Buy" : "Sell", entry, stop, take, na, na)
                 else
                     array.set(trades_set, existing_set, t)
                 if kl_idx < array.size(trade_state)
@@ -615,6 +632,7 @@ open_trade_for_level(int kl_idx) =>
         array.remove(trades_set, idx_set)
         t.status := "open"
         array.push(trades_open, t)
+        log_timeline("Trade OPEN", t.direction == 1 ? "Buy" : "Sell", t.entry, t.stop, t.take, na, na)
         if kl_idx < array.size(trade_state)
             array.set(trade_state, kl_idx, TE_STATE_OPEN)
         if kl_idx < array.size(trade_opened)
@@ -644,6 +662,9 @@ close_open_trade(int kl_idx, float exit_price, string outcome) =>
         t.status := "closed"
         t.pnlTicks := (exit_price - t.entry) / syminfo.mintick * t.direction
         array.push(trades_closed, t)
+        float risk_ticks = (t.take - t.entry) / syminfo.mintick
+        float rr_val = risk_ticks != 0 ? math.abs(t.pnlTicks) / math.abs(risk_ticks) : na
+        log_timeline("Trade CLOSED", t.direction == 1 ? "Buy" : "Sell", t.entry, t.stop, t.take, t.pnlTicks, rr_val)
         if kl_idx < array.size(trade_ticks)
             array.set(trade_ticks, kl_idx, t.pnlTicks)
         finalize_close(kl_idx, outcome, t.pnlTicks)
@@ -659,8 +680,10 @@ process_open_trade_bar(int kl_idx, string side) =>
         bool tp_hit = side == "buy" ? (not na(target) and high >= target) : (not na(target) and low <= target)
 
         if sl_hit
+            log_timeline("SL hit", side == "buy" ? "Buy" : "Sell", t_open.entry, t_open.stop, t_open.take, na, na)
             close_open_trade(kl_idx, stop, "Loss")
         else if tp_hit
+            log_timeline("TP hit", side == "buy" ? "Buy" : "Sell", t_open.entry, t_open.stop, t_open.take, na, na)
             close_open_trade(kl_idx, target, "Profit")
 
 get_tier(float peak_ratio) =>
@@ -909,6 +932,11 @@ if barstate.isconfirmed
                 int new_idx = array.size(kl_state) - 1
 
                 bool created_setup = create_trade_for_level(new_idx)
+
+                float kl_entry = new_idx < array.size(kl_entry_price) ? array.get(kl_entry_price, new_idx) : na
+                float kl_stop = new_idx < array.size(kl_stop_price) ? array.get(kl_stop_price, new_idx) : na
+                float kl_take = new_idx < array.size(kl_target_price) ? array.get(kl_target_price, new_idx) : na
+                log_timeline("KL detected", side == "buy" ? "Buy" : "Sell", kl_entry, kl_stop, kl_take, na, na)
 
                 // If creation failed (no valid swing, zero risk, etc), leave the level in STATE_ACTIVE
                 // with empty prices so that the ACTIVE ? ENTRY logic can try again on a later touch.
@@ -1477,6 +1505,7 @@ var table tbl_key = na
 var table tbl_trades = na
 var table tbl_performance = na
 var table tbl_flow = na
+var table tbl_timeline = na
 var bool table_mobile_mode = na
 
 delete_tables() =>
@@ -1488,10 +1517,13 @@ delete_tables() =>
         table.delete(tbl_performance)
     if table.is_valid(tbl_flow)
         table.delete(tbl_flow)
+    if table.is_valid(tbl_timeline)
+        table.delete(tbl_timeline)
     tbl_key := na
     tbl_trades := na
     tbl_performance := na
     tbl_flow := na
+    tbl_timeline := na
 
 if not showTables
     delete_tables()
@@ -1509,6 +1541,8 @@ else
             tbl_key := table.new(position=position.bottom_center, columns=9, rows=10, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=bottom_margin)
         if not table.is_valid(tbl_trades)
             tbl_trades := table.new(position=position.top_center, columns=4, rows=10, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=top_margin)
+        if not table.is_valid(tbl_timeline)
+            tbl_timeline := table.new(position=position.top_right, columns=3, rows=10, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=top_margin)
     else
         if not table.is_valid(tbl_key)
             tbl_key := table.new(position=position.bottom_right, columns=9, rows=12, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=bottom_margin)
@@ -1518,6 +1552,8 @@ else
             tbl_performance := table.new(position=position.bottom_left, columns=6, rows=20, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=bottom_margin)
         if not table.is_valid(tbl_flow)
             tbl_flow := table.new(position=position.top_right, columns=12, rows=22, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=top_margin)
+        if not table.is_valid(tbl_timeline)
+            tbl_timeline := table.new(position=position.top_right, columns=3, rows=20, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=top_margin + 260)
 
 if showTables
     float closed_r_total = 0.0
@@ -2075,5 +2111,47 @@ if showTables
                         table.cell(tbl_flow, col_start + 2, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
                         table.cell(tbl_flow, col_start + 3, current_row, "", bgcolor=empty_bg)
             current_row += 1
- 
-                                                        
+
+        if table.is_valid(tbl_timeline)
+            int tl_rows = table.rows(tbl_timeline)
+            int tl_cols = table.columns(tbl_timeline)
+            int tl_header = 0
+            int tl_max_data = math.max(tl_rows - 1, 0)
+            table.cell(tbl_timeline, 0, tl_header, "TRADE TIMELINE", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
+            if tl_cols > 1
+                table.merge_cells(tbl_timeline, 0, tl_header, tl_cols - 1, tl_header)
+
+            int events_count = array.size(timeline)
+            int render_count = math.min(events_count, tl_max_data)
+
+            for row = 0 to tl_max_data - 1
+                int data_row = tl_header + 1 + row
+                int ev_idx = events_count - 1 - row
+                bool has_event = row < render_count and ev_idx >= 0
+                color row_bg = row % 2 == 0 ? color.new(color.black, 88) : color.new(color.black, 84)
+                if has_event
+                    TimelineEvent ev = array.get(timeline, ev_idx)
+                    string ev_label = str.tostring(ev.bar) + " | " + ev.event
+                    color ev_color = switch ev.event
+                        "KL detected" => color.yellow
+                        "Trade SET" => color.white
+                        "Trade OPEN" => ev.dir == "Buy" ? buyColor : sellColor
+                        "TP hit" => color.lime
+                        "SL hit" => color.red
+                        "Trade CLOSED" => color.new(color.gray, 10)
+                        => color.white
+                    string price_info = "E:" + str.tostring(ev.entry, format.mintick) + " S:" + str.tostring(ev.stop, format.mintick) + " T:" + str.tostring(ev.take, format.mintick)
+                    if ev.event == "Trade CLOSED" and not na(ev.pnlTicks)
+                        price_info := "PnL " + str.tostring(math.round(ev.pnlTicks), "+#;-#") + "t | " + price_info
+                    string rr_info = ev.event == "Trade CLOSED" and not na(ev.rr) ? "RR " + str.tostring(ev.rr, "#.0") : "-"
+
+                    table.cell(tbl_timeline, 0, data_row, ev_label + " (" + ev.dir + ")", text_color=ev_color, text_size=size.small, bgcolor=row_bg)
+                    if tl_cols > 1
+                        table.cell(tbl_timeline, 1, data_row, price_info, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                    if tl_cols > 2
+                        table.cell(tbl_timeline, 2, data_row, rr_info, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                else
+                    for col = 0 to tl_cols - 1
+                        table.cell(tbl_timeline, col, data_row, "-", text_color=color.gray, text_size=size.small, bgcolor=row_bg)
+
+
