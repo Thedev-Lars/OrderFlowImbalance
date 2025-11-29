@@ -1463,6 +1463,15 @@ if barstate.islast and not mobileCompact
     int closed_tick_count = array.size(closed_ticks)
     int trades_rows = mobileCompact ? 18 : 28
     int last_trade_row = trades_rows - 1
+
+    // Ensure any closed trades are logged before rendering so winners/losses always appear
+    if array.size(trade_state) > 0 and array.size(kl_closed_logged) > 0
+        for idx = 0 to array.size(trade_state) - 1
+            int ts_closed = array.get(trade_state, idx)
+            bool is_closed = ts_closed == TE_STATE_CLOSED_WIN or ts_closed == TE_STATE_CLOSED_LOSS
+            if is_closed and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
+                record_closed_trade(idx)
+
     if closed_tick_count > 0
         for i_close = 0 to closed_tick_count - 1
             float tick_val = array.get(closed_ticks, i_close)
@@ -1599,8 +1608,10 @@ if barstate.islast and not mobileCompact
     int max_c = 8
     int closed_count = array.size(closed_side)
     if closed_count > 0
-        for idx = 0 to closed_count - 1
+        // Render newest closed trades first so recent results appear at the top
+        for offset = 0 to closed_count - 1
             if t_row < trades_rows
+                int idx = closed_count - 1 - offset
                 string s_side3 = array.get(closed_side, idx)
                 float e_entry3 = array.get(closed_entry, idx)
                 float e_stop3 = array.get(closed_stop, idx)
