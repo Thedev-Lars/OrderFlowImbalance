@@ -1548,6 +1548,7 @@ f_manage_table(tbl, enabled, pos, cols, rows, bg, border_width) =>
 var table tbl_key = na
 var table tbl_trades = na
 var table tbl_performance = na
+var table tbl_tradesUnified = na
 var table tbl_flow = na
 var table tbl_mobile = na
 var bool table_mobile_mode = false
@@ -1567,123 +1568,32 @@ if recreate_layout
     tbl_performance := na
     tbl_flow := na
     tbl_mobile := na
+    tbl_tradesUnified := na
 
 if desktopTablesOn
     tbl_key := f_manage_table(tbl_key, true, position.bottom_right, 9, 12, color.new(color.black, 80), 1)
-    tbl_trades := f_manage_table(tbl_trades, true, position.top_left, 7, 16, color.new(color.black, 80), 1)
-    tbl_performance := f_manage_table(tbl_performance, true, position.bottom_left, 6, 20, color.new(color.black, 80), 1)
+    // tbl_trades := f_manage_table(tbl_trades, true, position.top_left, 7, 16, color.new(color.black, 80), 1)
+    // tbl_performance := f_manage_table(tbl_performance, true, position.bottom_left, 6, 20, color.new(color.black, 80), 1)
     tbl_flow := f_manage_table(tbl_flow, true, position.top_right, 12, 22, color.new(color.black, 80), 1)
     tbl_mobile := f_manage_table(tbl_mobile, false, position.bottom_center, 4, 10, color.new(color.black, 80), 1)
+    tbl_tradesUnified := f_manage_table(tbl_tradesUnified, true, position.bottom_left, 10, 30, color.new(color.black, 80), 1)
 else if mobileTablesOn
     tbl_key := f_manage_table(tbl_key, true, position.bottom_center, 9, 10, color.new(color.black, 80), 1)
-    tbl_trades := f_manage_table(tbl_trades, true, position.top_center, 4, 10, color.new(color.black, 80), 1)
-    tbl_performance := f_manage_table(tbl_performance, false, position.bottom_left, 6, 20, color.new(color.black, 80), 1)
+    // tbl_trades := f_manage_table(tbl_trades, true, position.top_center, 4, 10, color.new(color.black, 80), 1)
+    // tbl_performance := f_manage_table(tbl_performance, false, position.bottom_left, 6, 20, color.new(color.black, 80), 1)
     tbl_flow := f_manage_table(tbl_flow, false, position.top_right, 12, 22, color.new(color.black, 80), 1)
     tbl_mobile := f_manage_table(tbl_mobile, true, position.bottom_center, 4, 10, color.new(color.black, 80), 1)
+    tbl_tradesUnified := f_manage_table(tbl_tradesUnified, false, position.bottom_left, 10, 30, color.new(color.black, 80), 1)
 else
     tbl_key := f_manage_table(tbl_key, false, position.bottom_right, 9, 12, color.new(color.black, 80), 1)
-    tbl_trades := f_manage_table(tbl_trades, false, position.top_left, 7, 16, color.new(color.black, 80), 1)
-    tbl_performance := f_manage_table(tbl_performance, false, position.bottom_left, 6, 20, color.new(color.black, 80), 1)
+    // tbl_trades := f_manage_table(tbl_trades, false, position.top_left, 7, 16, color.new(color.black, 80), 1)
+    // tbl_performance := f_manage_table(tbl_performance, false, position.bottom_left, 6, 20, color.new(color.black, 80), 1)
     tbl_flow := f_manage_table(tbl_flow, false, position.top_right, 12, 22, color.new(color.black, 80), 1)
     tbl_mobile := f_manage_table(tbl_mobile, false, position.bottom_center, 4, 10, color.new(color.black, 80), 1)
+    tbl_tradesUnified := f_manage_table(tbl_tradesUnified, false, position.bottom_left, 10, 30, color.new(color.black, 80), 1)
 
 if showTables
-    float closed_r_total = 0.0
-    int closed_r_trades = 0
-    int closed_r_wins = 0
-    float closed_tick_sum = 0.0
-    int closed_trade_count = array.size(trades_closed)
-    int closed_tick_wins = 0
-    float closed_tick_avg = na
-    float closed_r_avg = na
-    float closed_tick_winrate = na
-    float closed_r_winrate = na
-
-    if closed_trade_count > 0
-        for t_idx = 0 to closed_trade_count - 1
-            Trade t = array.get(trades_closed, t_idx)
-            float pnl_ticks = t.pnlTicks
-            float risk_ticks = (t.take - t.entry) / syminfo.mintick
-            float rr_val = not na(pnl_ticks) and risk_ticks != 0 ? math.abs(pnl_ticks) / math.abs(risk_ticks) : na
-
-            if not na(rr_val)
-                closed_r_total += rr_val
-                closed_r_trades += 1
-                if rr_val > 0
-                    closed_r_wins += 1
-
-            if not na(pnl_ticks)
-                closed_tick_sum += pnl_ticks
-                if pnl_ticks > 0
-                    closed_tick_wins += 1
-
-        closed_tick_avg := closed_trade_count > 0 ? closed_tick_sum / closed_trade_count : na
-        closed_r_avg := closed_r_trades > 0 ? closed_r_total / closed_r_trades : na
-        closed_tick_winrate := closed_trade_count > 0 ? (closed_tick_wins * 100.0) / closed_trade_count : na
-        closed_r_winrate := closed_r_trades > 0 ? (closed_r_wins * 100.0) / closed_r_trades : na
-
-    if barstate.islast and not mobileCompact
-        // Performance table for closed trades
-        table.cell(tbl_performance, 0, 0, "PERFORMANCE (CLOSED TRADES)", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
-        table.merge_cells(tbl_performance, 0, 0, 5, 0)
-
-        int perf_row = 1
-        table.cell(tbl_performance, 0, perf_row, "Trades", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_performance, 1, perf_row, "Wins", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_performance, 2, perf_row, "Win %", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_performance, 3, perf_row, "PnL (tks)", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_performance, 4, perf_row, "Avg Tks", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_performance, 5, perf_row, "Avg R", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-
-        perf_row += 1
-        string win_pct = na(closed_tick_winrate) ? "na" : str.tostring(closed_tick_winrate, "#.0") + "%"
-        string pnl_ticks = closed_trade_count > 0 ? str.tostring(math.round(closed_tick_sum), "+#;-#") : "na"
-        string avg_ticks = na(closed_tick_avg) ? "na" : str.tostring(closed_tick_avg, "#.0")
-        string avg_r = na(closed_r_avg) ? "na" : str.tostring(closed_r_avg, "#.0")
-        table.cell(tbl_performance, 0, perf_row, str.tostring(closed_trade_count), text_color=color.white, text_size=size.small, bgcolor=color.new(color.black, 85))
-        table.cell(tbl_performance, 1, perf_row, str.tostring(closed_tick_wins), text_color=color.white, text_size=size.small, bgcolor=color.new(color.black, 85))
-        table.cell(tbl_performance, 2, perf_row, win_pct, text_color=color.white, text_size=size.small, bgcolor=color.new(color.black, 85))
-        table.cell(tbl_performance, 3, perf_row, pnl_ticks, text_color=color.white, text_size=size.small, bgcolor=color.new(color.black, 85))
-        table.cell(tbl_performance, 4, perf_row, avg_ticks, text_color=color.white, text_size=size.small, bgcolor=color.new(color.black, 85))
-        table.cell(tbl_performance, 5, perf_row, avg_r, text_color=color.white, text_size=size.small, bgcolor=color.new(color.black, 85))
-
-        perf_row += 2
-        table.cell(tbl_performance, 0, perf_row, "CLOSED TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 70))
-        table.merge_cells(tbl_performance, 0, perf_row, 5, perf_row)
-
-        perf_row += 1
-        table.cell(tbl_performance, 0, perf_row, "Trade ID", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_performance, 1, perf_row, "Dir", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_performance, 2, perf_row, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_performance, 3, perf_row, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_performance, 4, perf_row, "Take", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_performance, 5, perf_row, "PnL / RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-
-        int max_perf_rows = 10
-        for row_idx = 0 to max_perf_rows - 1
-            int data_row = perf_row + 1 + row_idx
-            int rev_idx = array.size(trades_closed) - 1 - row_idx
-            bool has_trade = rev_idx >= 0 and rev_idx < array.size(trades_closed)
-            color perf_bg = row_idx % 2 == 0 ? color.new(color.black, 90) : color.new(color.black, 80)
-            if has_trade
-                Trade t = array.get(trades_closed, rev_idx)
-                string dir_str = t.direction == 1 ? "Buy" : "Sell"
-                float risk_ticks = (t.take - t.entry) / syminfo.mintick
-                float rr_val = na(t.pnlTicks) or risk_ticks == 0 ? na : (math.abs(t.pnlTicks) / math.abs(risk_ticks))
-                string pnl_rr = na(t.pnlTicks) ? "-" : str.tostring(math.round(t.pnlTicks), "+#;-#") + " | RR " + (na(rr_val) ? "na" : str.tostring(rr_val, "#.0"))
-
-                table.cell(tbl_performance, 0, data_row, str.tostring(t.id), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
-                table.cell(tbl_performance, 1, data_row, dir_str, text_color=color.white, text_size=size.small, bgcolor=perf_bg)
-                table.cell(tbl_performance, 2, data_row, str.tostring(t.entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
-                table.cell(tbl_performance, 3, data_row, str.tostring(t.stop, format.mintick), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
-                table.cell(tbl_performance, 4, data_row, str.tostring(t.take, format.mintick), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
-                table.cell(tbl_performance, 5, data_row, pnl_rr, text_color=color.white, text_size=size.small, bgcolor=perf_bg)
-            else
-                color empty_bg = color.new(color.gray, 95)
-                for col = 0 to 5
-                    table.cell(tbl_performance, col, data_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
-
-        table.cell(tbl_key, 0, 0, "KEY IMBALANCE LEVELS", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 50))
+    table.cell(tbl_key, 0, 0, "KEY IMBALANCE LEVELS", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 50))
         table.merge_cells(tbl_key, 0, 0, 8, 0)
 
         table.cell(tbl_key, 0, 1, "Range", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
@@ -1925,48 +1835,175 @@ if showTables
                 for col = 0 to 8
                     table.cell(tbl_key, col, data_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
 
-        table.cell(tbl_trades, 0, 0, "COMPACT TRADES", text_color=color.white, text_size=size.normal, bgcolor=header_bg)
-        table.merge_cells(tbl_trades, 0, 0, 3, 0)
-
-        int t_row = 1
-        table.cell(tbl_trades, 0, t_row, "Dir", text_color=color.white, text_size=size.small, bgcolor=section_bg)
-        table.cell(tbl_trades, 1, t_row, "Entry", text_color=color.white, text_size=size.small, bgcolor=section_bg)
-        table.cell(tbl_trades, 2, t_row, "PnL (tks)", text_color=color.white, text_size=size.small, bgcolor=section_bg)
-        table.cell(tbl_trades, 3, t_row, "RR", text_color=color.white, text_size=size.small, bgcolor=section_bg)
-        t_row += 1
-
-        int total_levels = array.size(kl_state)
-        int max_rows = (mobileCompact ? 10 : 16) - 2
-        float tick_size = syminfo.mintick
-
-        for idx_offset = 0 to total_levels - 1
-            int idx = total_levels - 1 - idx_offset
-            if t_row - 2 < max_rows and idx < array.size(kl_state)
-                string st = array.get(kl_state, idx)
-                if st == STATE_ENTRY or st == STATE_TESTING
-                    string s_side = array.get(kl_side, idx)
-                    float e_entry = array.get(kl_entry_price, idx)
-                    float e_rr = array.get(kl_rr_ratio, idx)
-                    float pnl_ticks = na
-                    if st == STATE_TESTING and tick_size > 0
-                        pnl_ticks := s_side == "buy" ? (close - e_entry) / tick_size : (e_entry - close) / tick_size
-                    string pnl_str = na(pnl_ticks) ? "-" : str.tostring(math.round(pnl_ticks), "+#;-#")
-                    color row_bg = s_side == "buy" ? color.new(col_buy, 90) : color.new(col_sell, 90)
-                    color dir_col = s_side == "buy" ? col_buy : col_sell
-                    table.cell(tbl_trades, 0, t_row, s_side == "buy" ? "Buy" : "Sell", text_color=dir_col, text_size=size.small, bgcolor=row_bg)
-                    table.cell(tbl_trades, 1, t_row, str.tostring(e_entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                    table.cell(tbl_trades, 2, t_row, pnl_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                    table.cell(tbl_trades, 3, t_row, na(e_rr) ? "-" : str.tostring(e_rr, "#.#"), text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                    t_row += 1
-
-        int last_row = (mobileCompact ? 10 : 16) - 1
-        for r = t_row to last_row
-            table.cell(tbl_trades, 0, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
-            table.cell(tbl_trades, 1, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
-            table.cell(tbl_trades, 2, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
-            table.cell(tbl_trades, 3, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
-
     if barstate.islast and not mobileCompact
+        // Ensure any closed trades are logged before rendering so winners/losses always appear
+        if array.size(trade_state) > 0 and array.size(kl_closed_logged) > 0
+            for idx = 0 to array.size(trade_state) - 1
+                int ts_closed = array.get(trade_state, idx)
+                bool is_closed = ts_closed == TE_STATE_CLOSED_WIN or ts_closed == TE_STATE_CLOSED_LOSS
+                bool opened_once = idx < array.size(trade_opened) ? array.get(trade_opened, idx) : false
+                bool already_closed = idx < array.size(trade_closed_bar) and not na(array.get(trade_closed_bar, idx))
+                if is_closed and opened_once and not already_closed and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
+                    record_closed_trade(idx)
+
+        // ---------------------------------------------------------------------
+        // Unified trade table with ideas, open, and closed sections
+        int unified_row = 0
+        color trade_header_bg = color.new(color.gray, 60)
+        color trade_section_bg = color.new(color.gray, 70)
+
+        table.cell(tbl_tradesUnified, 0, unified_row, "TRADE IDEAS", text_color=color.white, text_size=size.normal, bgcolor=trade_header_bg)
+        table.merge_cells(tbl_tradesUnified, 0, unified_row, 9, unified_row)
+        unified_row += 1
+
+        table.cell(tbl_tradesUnified, 0, unified_row, "Side", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+        table.cell(tbl_tradesUnified, 1, unified_row, "Entry", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+        table.cell(tbl_tradesUnified, 2, unified_row, "Stop", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+        table.cell(tbl_tradesUnified, 3, unified_row, "Target", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+        table.cell(tbl_tradesUnified, 4, unified_row, "RR", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+        table.cell(tbl_tradesUnified, 5, unified_row, "Tier", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+        table.cell(tbl_tradesUnified, 6, unified_row, "RangeHi", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+        table.cell(tbl_tradesUnified, 7, unified_row, "RangeLo", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+        table.cell(tbl_tradesUnified, 8, unified_row, "Strength", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+        table.cell(tbl_tradesUnified, 9, unified_row, "LastTest", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+        unified_row += 1
+
+        int idea_count = array.size(trade_state)
+        for i = 0 to idea_count - 1
+            if i < array.size(trade_state) and array.get(trade_state, i) == TE_STATE_POSSIBLE and unified_row < 30
+                string side = i < array.size(kl_side) ? array.get(kl_side, i) : ""
+                float entry = i < array.size(kl_entry_price) ? array.get(kl_entry_price, i) : na
+                float stop_val = i < array.size(kl_stop_price) ? array.get(kl_stop_price, i) : na
+                float target = i < array.size(kl_target_price) ? array.get(kl_target_price, i) : na
+                float rr_val = i < array.size(kl_rr_ratio) ? array.get(kl_rr_ratio, i) : na
+                string tier_val = i < array.size(kl_tier) ? array.get(kl_tier, i) : ""
+                float range_hi = i < array.size(kl_range_top) ? array.get(kl_range_top, i) : na
+                float range_lo = i < array.size(kl_range_bottom) ? array.get(kl_range_bottom, i) : na
+                float strength_val = i < array.size(kl_strength) ? array.get(kl_strength, i) : na
+                int last_test = i < array.size(kl_last_test_bar) ? array.get(kl_last_test_bar, i) : na
+
+                color row_bg = side == "buy" ? color.new(col_buy, 90) : color.new(col_sell, 90)
+                color side_col = side == "buy" ? col_buy : col_sell
+                string rr_str = na(rr_val) ? "-" : str.tostring(rr_val, "#.#")
+                string strength_str = na(strength_val) ? "-" : str.tostring(math.round(strength_val))
+                string last_test_str = na(last_test) ? "-" : str.tostring(last_test)
+
+                table.cell(tbl_tradesUnified, 0, unified_row, side == "buy" ? "B" : "S", text_color=side_col, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_tradesUnified, 1, unified_row, str.tostring(entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_tradesUnified, 2, unified_row, str.tostring(stop_val, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_tradesUnified, 3, unified_row, str.tostring(target, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_tradesUnified, 4, unified_row, rr_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_tradesUnified, 5, unified_row, tier_val, text_color=color.yellow, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_tradesUnified, 6, unified_row, str.tostring(range_hi, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_tradesUnified, 7, unified_row, str.tostring(range_lo, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_tradesUnified, 8, unified_row, strength_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_tradesUnified, 9, unified_row, last_test_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                unified_row += 1
+
+        // Open trade section
+        if unified_row < 30
+            table.cell(tbl_tradesUnified, 0, unified_row, "OPEN TRADE", text_color=color.white, text_size=size.normal, bgcolor=trade_header_bg)
+            table.merge_cells(tbl_tradesUnified, 0, unified_row, 9, unified_row)
+            unified_row += 1
+
+            int open_idx = -1
+            for oi = 0 to array.size(trade_state) - 1
+                if array.get(trade_state, oi) == TE_STATE_OPEN
+                    open_idx := oi
+                    break
+
+            if open_idx != -1 and unified_row < 30
+                table.cell(tbl_tradesUnified, 0, unified_row, "Side", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+                table.cell(tbl_tradesUnified, 1, unified_row, "Entry", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+                table.cell(tbl_tradesUnified, 2, unified_row, "Stop", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+                table.cell(tbl_tradesUnified, 3, unified_row, "Target", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+                table.cell(tbl_tradesUnified, 4, unified_row, "FloatTks", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+                table.cell(tbl_tradesUnified, 5, unified_row, "RR", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+                table.cell(tbl_tradesUnified, 6, unified_row, "Tier", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+                table.cell(tbl_tradesUnified, 7, unified_row, "RangeHi", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+                table.cell(tbl_tradesUnified, 8, unified_row, "RangeLo", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+                table.cell(tbl_tradesUnified, 9, unified_row, "LastTest", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+                unified_row += 1
+
+                string o_side = open_idx < array.size(kl_side) ? array.get(kl_side, open_idx) : ""
+                float o_entry = open_idx < array.size(trade_entry) ? array.get(trade_entry, open_idx) : (open_idx < array.size(kl_entry_price) ? array.get(kl_entry_price, open_idx) : na)
+                float o_stop = open_idx < array.size(kl_stop_price) ? array.get(kl_stop_price, open_idx) : na
+                float o_target = open_idx < array.size(kl_target_price) ? array.get(kl_target_price, open_idx) : na
+                float o_rr = open_idx < array.size(kl_rr_ratio) ? array.get(kl_rr_ratio, open_idx) : na
+                string o_tier = open_idx < array.size(kl_tier) ? array.get(kl_tier, open_idx) : ""
+                float o_range_hi = open_idx < array.size(kl_range_top) ? array.get(kl_range_top, open_idx) : na
+                float o_range_lo = open_idx < array.size(kl_range_bottom) ? array.get(kl_range_bottom, open_idx) : na
+                int o_last_test = open_idx < array.size(kl_last_test_bar) ? array.get(kl_last_test_bar, open_idx) : na
+
+                float tick_sz = syminfo.mintick
+                float float_ticks = na
+                if tick_sz > 0 and not na(o_entry)
+                    float_ticks := o_side == "buy" ? (close - o_entry) / tick_sz : (o_entry - close) / tick_sz
+
+                color open_bg = o_side == "buy" ? color.new(col_buy, 85) : color.new(col_sell, 85)
+                color open_col = o_side == "buy" ? col_buy : col_sell
+                string o_rr_str = na(o_rr) ? "-" : str.tostring(o_rr, "#.#")
+                string o_last_test_str = na(o_last_test) ? "-" : str.tostring(o_last_test)
+                string float_str = na(float_ticks) ? "-" : str.tostring(math.round(float_ticks), "+#;-#")
+
+                table.cell(tbl_tradesUnified, 0, unified_row, o_side == "buy" ? "B" : "S", text_color=open_col, text_size=size.small, bgcolor=open_bg)
+                table.cell(tbl_tradesUnified, 1, unified_row, str.tostring(o_entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=open_bg)
+                table.cell(tbl_tradesUnified, 2, unified_row, str.tostring(o_stop, format.mintick), text_color=color.white, text_size=size.small, bgcolor=open_bg)
+                table.cell(tbl_tradesUnified, 3, unified_row, str.tostring(o_target, format.mintick), text_color=color.white, text_size=size.small, bgcolor=open_bg)
+                table.cell(tbl_tradesUnified, 4, unified_row, float_str, text_color=color.white, text_size=size.small, bgcolor=open_bg)
+                table.cell(tbl_tradesUnified, 5, unified_row, o_rr_str, text_color=color.white, text_size=size.small, bgcolor=open_bg)
+                table.cell(tbl_tradesUnified, 6, unified_row, o_tier, text_color=color.yellow, text_size=size.small, bgcolor=open_bg)
+                table.cell(tbl_tradesUnified, 7, unified_row, str.tostring(o_range_hi, format.mintick), text_color=color.white, text_size=size.small, bgcolor=open_bg)
+                table.cell(tbl_tradesUnified, 8, unified_row, str.tostring(o_range_lo, format.mintick), text_color=color.white, text_size=size.small, bgcolor=open_bg)
+                table.cell(tbl_tradesUnified, 9, unified_row, o_last_test_str, text_color=color.white, text_size=size.small, bgcolor=open_bg)
+                unified_row += 1
+            else
+                table.cell(tbl_tradesUnified, 0, unified_row, "NO OPEN TRADE", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 90))
+                table.merge_cells(tbl_tradesUnified, 0, unified_row, 9, unified_row)
+                unified_row += 1
+
+        // Closed trades section
+        if unified_row < 30
+            table.cell(tbl_tradesUnified, 0, unified_row, "CLOSED TRADES", text_color=color.white, text_size=size.normal, bgcolor=trade_header_bg)
+            table.merge_cells(tbl_tradesUnified, 0, unified_row, 9, unified_row)
+            unified_row += 1
+
+            table.cell(tbl_tradesUnified, 0, unified_row, "Side", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+            table.cell(tbl_tradesUnified, 1, unified_row, "Entry", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+            table.cell(tbl_tradesUnified, 2, unified_row, "Exit", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+            table.cell(tbl_tradesUnified, 3, unified_row, "Ticks", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+            table.cell(tbl_tradesUnified, 4, unified_row, "RR", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+            table.cell(tbl_tradesUnified, 5, unified_row, "Outcome", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
+            table.merge_cells(tbl_tradesUnified, 6, unified_row, 9, unified_row)
+            unified_row += 1
+
+            int closed_count = array.size(closed_side)
+            int max_closed_rows = math.max(0, 30 - unified_row)
+            int display_closed = math.min(closed_count, max_closed_rows)
+            for c_idx = 0 to display_closed - 1
+                string c_side = array.get(closed_side, c_idx)
+                float c_entry = c_idx < array.size(closed_entry) ? array.get(closed_entry, c_idx) : na
+                float c_stop = c_idx < array.size(closed_stop) ? array.get(closed_stop, c_idx) : na
+                float c_target = c_idx < array.size(closed_target) ? array.get(closed_target, c_idx) : na
+                float c_ticks = c_idx < array.size(closed_ticks) ? array.get(closed_ticks, c_idx) : na
+                float c_rr = c_idx < array.size(closed_trade_rr) ? array.get(closed_trade_rr, c_idx) : na
+                string c_result = c_idx < array.size(closed_result) ? array.get(closed_result, c_idx) : ""
+
+                float exit_price = c_result == "Profit" ? c_target : c_stop
+                color close_bg = c_result == "Profit" ? color.new(col_buy, 85) : color.new(col_stop, 85)
+                color close_col = c_result == "Profit" ? col_buy : col_sell
+                string c_rr_str = na(c_rr) ? "-" : str.tostring(c_rr, "#.#")
+                string c_tick_str = na(c_ticks) ? "-" : str.tostring(math.round(c_ticks), "+#;-#")
+
+                table.cell(tbl_tradesUnified, 0, unified_row, c_side == "buy" ? "B" : "S", text_color=close_col, text_size=size.small, bgcolor=close_bg)
+                table.cell(tbl_tradesUnified, 1, unified_row, str.tostring(c_entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=close_bg)
+                table.cell(tbl_tradesUnified, 2, unified_row, str.tostring(exit_price, format.mintick), text_color=color.white, text_size=size.small, bgcolor=close_bg)
+                table.cell(tbl_tradesUnified, 3, unified_row, c_tick_str, text_color=color.white, text_size=size.small, bgcolor=close_bg)
+                table.cell(tbl_tradesUnified, 4, unified_row, c_rr_str, text_color=color.white, text_size=size.small, bgcolor=close_bg)
+                table.cell(tbl_tradesUnified, 5, unified_row, c_result, text_color=color.white, text_size=size.small, bgcolor=close_bg)
+                table.merge_cells(tbl_tradesUnified, 6, unified_row, 9, unified_row)
+                unified_row += 1
+
         // ---------------------------------------------------------------------
         // Order flow table header and recent bars
         table.cell(tbl_flow, 0, 0, "ORDER FLOW HISTORY", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
@@ -2021,75 +2058,6 @@ if showTables
                         table.cell(tbl_flow, col_start + 3, current_row, "", bgcolor=empty_bg)
             current_row += 1
     
-        // ---------------------------------------------------------------------
-        // Unified trades table showing possible (ENTRY) and open (TESTING) trades only.
-        int total_levels = array.size(kl_state)
-        // Use a smaller number of rows to shorten the trades table and reduce overlap with other tables
-        int trades_rows = mobileCompact ? 12 : 16
-        int last_trade_row = trades_rows - 1
-    
-        // Ensure any closed trades are logged before rendering so winners/losses always appear
-        if array.size(trade_state) > 0 and array.size(kl_closed_logged) > 0
-            for idx = 0 to array.size(trade_state) - 1
-                int ts_closed = array.get(trade_state, idx)
-                bool is_closed = ts_closed == TE_STATE_CLOSED_WIN or ts_closed == TE_STATE_CLOSED_LOSS
-                bool opened_once = idx < array.size(trade_opened) ? array.get(trade_opened, idx) : false
-                bool already_closed = idx < array.size(trade_closed_bar) and not na(array.get(trade_closed_bar, idx))
-                if is_closed and opened_once and not already_closed and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
-                    record_closed_trade(idx)
-    
-        // Table title
-        table.cell(tbl_trades, 0, 0, "TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
-        table.merge_cells(tbl_trades, 0, 0, 6, 0)
-    
-        // Possible and live trades section
-        int t_row = 1
-        table.cell(tbl_trades, 0, t_row, "SET / OPEN TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 70))
-        table.merge_cells(tbl_trades, 0, t_row, 6, t_row)
-        t_row += 1
-        table.cell(tbl_trades, 0, t_row, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_trades, 1, t_row, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_trades, 2, t_row, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_trades, 3, t_row, "Target", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_trades, 4, t_row, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_trades, 5, t_row, "Tier", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        table.cell(tbl_trades, 6, t_row, "Status", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-        t_row += 1
-    
-        int max_p = 8
-        for idx_offset = 0 to total_levels - 1
-            int idx = total_levels - 1 - idx_offset
-            if idx < array.size(kl_state) and t_row < max_p + 3
-                string st = array.get(kl_state, idx)
-                if st == STATE_ENTRY or st == STATE_TESTING
-                    string s_side = array.get(kl_side, idx)
-                    float e_entry = array.get(kl_entry_price, idx)
-                    float e_stop = array.get(kl_stop_price, idx)
-                    float e_target = array.get(kl_target_price, idx)
-                    float e_rr = array.get(kl_rr_ratio, idx)
-                    string e_tier = array.get(kl_tier, idx)
-                    string side_str = s_side == "buy" ? "Buy" : "Sell"
-                    string rr_str = na(e_rr) ? "-" : str.tostring(e_rr, "#.#")
-                    string status_str = st == STATE_TESTING ? "Live" : "Ready"
-                    color row_bg = s_side == "buy" ? color.new(col_buy, 90) : color.new(col_sell, 90)
-                    color side_color2 = s_side == "buy" ? col_buy : col_sell
-                    table.cell(tbl_trades, 0, t_row, side_str, text_color=side_color2, text_size=size.small, bgcolor=row_bg)
-                    table.cell(tbl_trades, 1, t_row, str.tostring(e_entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                    table.cell(tbl_trades, 2, t_row, str.tostring(e_stop, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                    table.cell(tbl_trades, 3, t_row, str.tostring(e_target, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                    table.cell(tbl_trades, 4, t_row, rr_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                    table.cell(tbl_trades, 5, t_row, e_tier, text_color=color.yellow, text_size=size.small, bgcolor=row_bg)
-                    table.cell(tbl_trades, 6, t_row, status_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                    t_row += 1
-        int possible_fill_end = math.min(max_p + 2, last_trade_row)
-        for r = t_row to possible_fill_end
-            for c = 0 to 6
-                table.cell(tbl_trades, c, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
-        int fill_start_row = math.min(possible_fill_end + 1, last_trade_row)
-        for r = fill_start_row to last_trade_row
-            for col = 0 to 6
-                table.cell(tbl_trades, col, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
-        
         table.cell(tbl_flow, 0, current_row, "", bgcolor=color.new(color.gray, 80))
         table.merge_cells(tbl_flow, 0, current_row, 11, current_row)
         current_row += 1
