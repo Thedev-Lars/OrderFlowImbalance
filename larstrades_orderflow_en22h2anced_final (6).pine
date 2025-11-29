@@ -441,7 +441,11 @@ register_set_trade(int kl_idx) =>
         float stop = array.get(kl_stop_price, kl_idx)
         float take = array.get(kl_target_price, kl_idx)
         string side = array.get(kl_side, kl_idx)
-        if not na(entry) and not na(stop) and not na(take) and (side == "buy" or side == "sell")
+        bool valid_side = side == "buy" or side == "sell"
+        bool has_prices = not na(entry) and not na(stop) and not na(take)
+        bool price_between = side == "buy" ? (close >= stop and close <= take) : (close <= stop and close >= take)
+
+        if valid_side and has_prices and price_between
             int dir = side == "buy" ? 1 : -1
             int existing_open = find_trade_index(trades_open, kl_idx)
             if existing_open == -1
@@ -518,28 +522,20 @@ close_open_trade(int kl_idx, float exit_price, string outcome) =>
             array.set(trade_ticks, kl_idx, t.pnlTicks)
         finalize_close(kl_idx, outcome, t.pnlTicks)
 
-process_open_trade_bar(int kl_idx, string side, int test_count, int reject_count) =>
+process_open_trade_bar(int kl_idx, string side) =>
     int open_idx = find_trade_index(trades_open, kl_idx)
     if open_idx != -1
         Trade t_open = array.get(trades_open, open_idx)
         float stop = t_open.stop
         float target = t_open.take
 
-        bool hit_target = side == "buy" ? (not na(target) and high >= target) : (not na(target) and low <= target)
-        bool stop_condition = side == "buy" ? (not na(stop) and close < stop) : (not na(stop) and close > stop)
+        bool sl_hit = side == "buy" ? (not na(stop) and low <= stop) : (not na(stop) and high >= stop)
+        bool tp_hit = side == "buy" ? (not na(target) and high >= target) : (not na(target) and low <= target)
 
-        if hit_target
-            array.set(kl_test_count, kl_idx, test_count + 1)
-            array.set(kl_reject_count, kl_idx, 0)
+        if sl_hit
+            close_open_trade(kl_idx, stop, "Loss")
+        else if tp_hit
             close_open_trade(kl_idx, target, "Profit")
-        else
-            if stop_condition
-                reject_count := reject_count + 1
-            else
-                reject_count := 0
-            array.set(kl_reject_count, kl_idx, reject_count)
-            if stop_condition and reject_count >= stopConfirmBars
-                close_open_trade(kl_idx, stop, "Loss")
 
 get_tier(float peak_ratio) =>
     if peak_ratio >= extremeRatio
@@ -1036,56 +1032,49 @@ if array.size(kl_state) > 0
 
             // ACTIVE ? ENTRY (find valid trade setup)
             else if current_state == STATE_ACTIVE
-                // Only attempt to create a setup if we do not already have entry/stop/target prices from initial creation.
                 bool has_setup = i < array.size(kl_entry_price) and not na(array.get(kl_entry_price, i))
 
                 if not has_setup
-                    bool touching = (low <= range_top) and (high >= range_bottom)
-                    if touching
-                        array.set(trade_state, i, TE_STATE_ACTIVE)
-                        // Evaluate trade filters
-                        // Compute the imbalance ratio and total volume for this level
-                        float ratio_i = array.get(kl_peak_ratio, i)
-                        float totalVol = array.get(kl_poc_volume, i)
-                        // Estimate opposing volume: for buy levels ratio = buy/sell, so sellVol ˜ totalVol/(1+ratio).
-                        // For sell levels ratio = sell/buy, so buyVol ˜ totalVol/(1+ratio).
-                        float opposingVol = totalVol / (1 + ratio_i)
-                        float opposingPct = totalVol > 0 ? opposingVol / totalVol : 1.0
-                        bool opposition_ok = opposingPct <= maxOpposingPct or ratio_i >= imbalanceRatio
-                        bool trendAlign = not trendFilterEnabled or ((side == "buy" and trendDir == "up") or (side == "sell" and trendDir == "down"))
-                        bool extremeLevel = ratio_i >= extremeRatio
-                        // A level passes the filter if it aligns with the prevailing trend
-                        // and either meets the opposing-volume threshold or already clears
-                        // the baseline imbalance ratio. Extreme tiers still override both.
-                        bool passFilter = not trendFilterEnabled or (trendAlign and (opposition_ok or extremeLevel)) or extremeLevel
+                    array.set(trade_state, i, TE_STATE_ACTIVE)
+                    // Evaluate trade filters
+                    // Compute the imbalance ratio and total volume for this level
+                    float ratio_i = array.get(kl_peak_ratio, i)
+                    float totalVol = array.get(kl_poc_volume, i)
+                    // Estimate opposing volume: for buy levels ratio = buy/sell, so sellVol ˜ totalVol/(1+ratio).
+                    // For sell levels ratio = sell/buy, so buyVol ˜ totalVol/(1+ratio).
+                    float opposingVol = totalVol / (1 + ratio_i)
+                    float opposingPct = totalVol > 0 ? opposingVol / totalVol : 1.0
+                    bool opposition_ok = opposingPct <= maxOpposingPct or ratio_i >= imbalanceRatio
+                    bool trendAlign = not trendFilterEnabled or ((side == "buy" and trendDir == "up") or (side == "sell" and trendDir == "down"))
+                    bool extremeLevel = ratio_i >= extremeRatio
+                    // A level passes the filter if it aligns with the prevailing trend
+                    // and either meets the opposing-volume threshold or already clears
+                    // the baseline imbalance ratio. Extreme tiers still override both.
+                    bool passFilter = not trendFilterEnabled or (trendAlign and (opposition_ok or extremeLevel)) or extremeLevel
 
-                        if passFilter
-                            // Use the unified swing+ATR stop and RR-banded targeting helper
-                            bool created = create_trade_for_level(i)
-                            if not created
-                                array.set(kl_last_test_bar, i, bar_index)
-                        else
-                            // Filters not satisfied – remain ACTIVE and record touch
+                    if passFilter
+                        // Use the unified swing+ATR stop and RR-banded targeting helper
+                        bool created = create_trade_for_level(i)
+                        if not created
                             array.set(kl_last_test_bar, i, bar_index)
+                    else
+                        // Filters not satisfied – remain ACTIVE and record touch
+                        array.set(kl_last_test_bar, i, bar_index)
             
             // ENTRY ? TESTING (trade is live)
             else if current_state == STATE_ENTRY
                 register_set_trade(i)
-                float entry_band = bucket_size + (rejectionBuffer * syminfo.mintick)
-                float entry_high = side == "buy" ? range_top + entry_band : range_bottom - entry_band
-                float entry_low = side == "buy" ? range_bottom - entry_band : range_top + entry_band
-                bool triggered = (low <= entry_high) and (high >= entry_low)
-                bool broke_zone = side == "buy" ? (not na(array.get(kl_stop_price, i)) and close <= array.get(kl_stop_price, i)) : (not na(array.get(kl_stop_price, i)) and close >= array.get(kl_stop_price, i))
+                float entry_price = array.get(kl_entry_price, i)
+                bool has_prices = not na(entry_price) and i < array.size(kl_stop_price) and not na(array.get(kl_stop_price, i)) and i < array.size(kl_target_price) and not na(array.get(kl_target_price, i))
+                bool triggered = has_prices and (side == "buy" ? (low <= entry_price) : (high >= entry_price))
 
                 if triggered
                     open_trade_for_level(i)
-                    process_open_trade_bar(i, side, test_count, reject_count)
-                else if broke_zone
-                    reject_trade_for_level(i)
+                    process_open_trade_bar(i, side)
 
             // TESTING ? PROFIT or LOSS
             else if current_state == STATE_TESTING
-                process_open_trade_bar(i, side, test_count, reject_count)
+                process_open_trade_bar(i, side)
 
             // PROFIT ? HELD
             else if current_state == STATE_PROFIT
