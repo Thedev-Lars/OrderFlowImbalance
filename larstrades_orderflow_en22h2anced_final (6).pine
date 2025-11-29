@@ -1549,7 +1549,6 @@ var table tbl_key = na
 var table tbl_trades = na
 var table tbl_performance = na
 var table tbl_flow = na
-var table tbl_timeline = na
 var table tbl_mobile = na
 var bool table_mobile_mode = false
 var bool table_mobile_mode_initialized = false
@@ -1567,7 +1566,6 @@ if recreate_layout
     tbl_trades := na
     tbl_performance := na
     tbl_flow := na
-    tbl_timeline := na
     tbl_mobile := na
 
 if desktopTablesOn
@@ -1575,12 +1573,10 @@ if desktopTablesOn
     tbl_trades := f_manage_table(tbl_trades, true, position.top_left, 7, 16, color.new(color.black, 80), 1)
     tbl_performance := f_manage_table(tbl_performance, true, position.bottom_left, 6, 20, color.new(color.black, 80), 1)
     tbl_flow := f_manage_table(tbl_flow, true, position.top_right, 12, 22, color.new(color.black, 80), 1)
-    tbl_timeline := f_manage_table(tbl_timeline, true, position.top_right, 3, 20, color.new(color.black, 80), 1)
     tbl_mobile := f_manage_table(tbl_mobile, false, position.bottom_center, 4, 10, color.new(color.black, 80), 1)
 else if mobileTablesOn
     tbl_key := f_manage_table(tbl_key, true, position.bottom_center, 9, 10, color.new(color.black, 80), 1)
     tbl_trades := f_manage_table(tbl_trades, true, position.top_center, 4, 10, color.new(color.black, 80), 1)
-    tbl_timeline := f_manage_table(tbl_timeline, true, position.top_right, 3, 10, color.new(color.black, 80), 1)
     tbl_performance := f_manage_table(tbl_performance, false, position.bottom_left, 6, 20, color.new(color.black, 80), 1)
     tbl_flow := f_manage_table(tbl_flow, false, position.top_right, 12, 22, color.new(color.black, 80), 1)
     tbl_mobile := f_manage_table(tbl_mobile, true, position.bottom_center, 4, 10, color.new(color.black, 80), 1)
@@ -1589,7 +1585,6 @@ else
     tbl_trades := f_manage_table(tbl_trades, false, position.top_left, 7, 16, color.new(color.black, 80), 1)
     tbl_performance := f_manage_table(tbl_performance, false, position.bottom_left, 6, 20, color.new(color.black, 80), 1)
     tbl_flow := f_manage_table(tbl_flow, false, position.top_right, 12, 22, color.new(color.black, 80), 1)
-    tbl_timeline := f_manage_table(tbl_timeline, false, position.top_right, 3, 20, color.new(color.black, 80), 1)
     tbl_mobile := f_manage_table(tbl_mobile, false, position.bottom_center, 4, 10, color.new(color.black, 80), 1)
 
 if showTables
@@ -2145,47 +2140,4 @@ if showTables
                         table.cell(tbl_flow, col_start + 2, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
                         table.cell(tbl_flow, col_start + 3, current_row, "", bgcolor=empty_bg)
             current_row += 1
-
-        if not na(tbl_timeline)
-            int tl_rows = mobileCompact ? 10 : 20
-            int tl_cols = 3
-            int tl_header = 0
-            int tl_max_data = math.max(tl_rows - 1, 0)
-            table.cell(tbl_timeline, 0, tl_header, "TRADE TIMELINE", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
-            if tl_cols > 1
-                table.merge_cells(tbl_timeline, 0, tl_header, tl_cols - 1, tl_header)
-
-            int events_count = array.size(timeline)
-            int render_count = math.min(events_count, tl_max_data)
-
-            for row = 0 to tl_max_data - 1
-                int data_row = tl_header + 1 + row
-                int ev_idx = events_count - 1 - row
-                bool has_event = row < render_count and ev_idx >= 0
-                color row_bg = row % 2 == 0 ? color.new(color.black, 88) : color.new(color.black, 84)
-                if has_event
-                    TimelineEvent ev = array.get(timeline, ev_idx)
-                    string ev_label = str.tostring(ev.bar) + " | " + ev.event
-                    color ev_color = switch ev.event
-                        "KL detected" => color.yellow
-                        "Trade SET" => color.white
-                        "Trade OPEN" => ev.dir == "Buy" ? buyColor : sellColor
-                        "TP hit" => color.lime
-                        "SL hit" => color.red
-                        "Trade CLOSED" => color.new(color.gray, 10)
-                        => color.white
-                    string price_info = "E:" + str.tostring(ev.entry, format.mintick) + " S:" + str.tostring(ev.stop, format.mintick) + " T:" + str.tostring(ev.take, format.mintick)
-                    if ev.event == "Trade CLOSED" and not na(ev.pnlTicks)
-                        price_info := "PnL " + str.tostring(math.round(ev.pnlTicks), "+#;-#") + "t | " + price_info
-                    string rr_info = ev.event == "Trade CLOSED" and not na(ev.rr) ? "RR " + str.tostring(ev.rr, "#.0") : "-"
-
-                    table.cell(tbl_timeline, 0, data_row, ev_label + " (" + ev.dir + ")", text_color=ev_color, text_size=size.small, bgcolor=row_bg)
-                    if tl_cols > 1
-                        table.cell(tbl_timeline, 1, data_row, price_info, text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                    if tl_cols > 2
-                        table.cell(tbl_timeline, 2, data_row, rr_info, text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                else
-                    for col = 0 to tl_cols - 1
-                        table.cell(tbl_timeline, col, data_row, "-", text_color=color.gray, text_size=size.small, bgcolor=row_bg)
-
 
