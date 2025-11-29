@@ -227,6 +227,22 @@ var string[] closed_result = array.new_string()
 var box[] closed_trade_boxes = array.new_box()
 var int[] trade_closed_bar = array.new_int()
 
+// Trade lifecycle state machine
+type Trade
+    int id
+    int kl_id
+    int direction
+    float entry
+    float stop
+    float take
+    string status   // "set", "open", "closed"
+    float pnlTicks
+
+var Trade[] trades_set = array.new<Trade>()
+var Trade[] trades_open = array.new<Trade>()
+var Trade[] trades_closed = array.new<Trade>()
+var int trade_seq = 0
+
 var bool perfResetLatched = false
 
 // Session management
@@ -293,6 +309,10 @@ if current_day != last_session_day
     array.clear(trade_target)
     array.clear(trade_ticks)
     array.clear(trade_closed_bar)
+    array.clear(trades_set)
+    array.clear(trades_open)
+    array.clear(trades_closed)
+    trade_seq := 0
     clear_performance_history()
     last_session_day := current_day
 
@@ -365,6 +385,161 @@ finalize_close(int idx, string outcome, float ticks_val) =>
         int max_closed_boxes = 60
         if array.size(closed_trade_boxes) > max_closed_boxes
             box.delete(array.shift(closed_trade_boxes))
+
+find_trade_index(Trade[] arr, int kl_idx) =>
+    int found = -1
+    for i = 0 to array.size(arr) - 1
+        Trade t = array.get(arr, i)
+        if t.kl_id == kl_idx
+            found := i
+            break
+    found
+
+swap_trade_indices(int a, int b) =>
+    Trade[] arr_ref = trades_set
+    for i = 0 to array.size(arr_ref) - 1
+        Trade t = array.get(arr_ref, i)
+        if t.kl_id == a
+            t.kl_id := b
+            array.set(arr_ref, i, t)
+        else if t.kl_id == b
+            t.kl_id := a
+            array.set(arr_ref, i, t)
+
+    arr_ref := trades_open
+    for i = 0 to array.size(arr_ref) - 1
+        Trade t = array.get(arr_ref, i)
+        if t.kl_id == a
+            t.kl_id := b
+            array.set(arr_ref, i, t)
+        else if t.kl_id == b
+            t.kl_id := a
+            array.set(arr_ref, i, t)
+
+    arr_ref := trades_closed
+    for i = 0 to array.size(arr_ref) - 1
+        Trade t = array.get(arr_ref, i)
+        if t.kl_id == a
+            t.kl_id := b
+            array.set(arr_ref, i, t)
+        else if t.kl_id == b
+            t.kl_id := a
+            array.set(arr_ref, i, t)
+
+remove_trades_for_index(int idx) =>
+    int remove_i = find_trade_index(trades_set, idx)
+    if remove_i != -1
+        array.remove(trades_set, remove_i)
+
+    remove_i := find_trade_index(trades_open, idx)
+    if remove_i != -1
+        array.remove(trades_open, remove_i)
+
+register_set_trade(int kl_idx) =>
+    if kl_idx >= 0 and kl_idx < array.size(kl_entry_price)
+        float entry = array.get(kl_entry_price, kl_idx)
+        float stop = array.get(kl_stop_price, kl_idx)
+        float take = array.get(kl_target_price, kl_idx)
+        string side = array.get(kl_side, kl_idx)
+        if not na(entry) and not na(stop) and not na(take) and (side == "buy" or side == "sell")
+            int dir = side == "buy" ? 1 : -1
+            int existing_open = find_trade_index(trades_open, kl_idx)
+            if existing_open == -1
+                int existing_set = find_trade_index(trades_set, kl_idx)
+                Trade t = existing_set == -1 ? Trade.new(0, kl_idx, dir, entry, stop, take, "set", na) : array.get(trades_set, existing_set)
+                if existing_set == -1
+                    trade_seq += 1
+                    t.id := trade_seq
+                t.kl_id := kl_idx
+                t.direction := dir
+                t.entry := entry
+                t.stop := stop
+                t.take := take
+                t.status := "set"
+                t.pnlTicks := na
+                if existing_set == -1
+                    array.push(trades_set, t)
+                else
+                    array.set(trades_set, existing_set, t)
+                if kl_idx < array.size(trade_state)
+                    array.set(trade_state, kl_idx, TE_STATE_POSSIBLE)
+                if kl_idx < array.size(trade_opened)
+                    array.set(trade_opened, kl_idx, false)
+                if kl_idx < array.size(trade_entry)
+                    array.set(trade_entry, kl_idx, entry)
+                if kl_idx < array.size(trade_stop)
+                    array.set(trade_stop, kl_idx, stop)
+                if kl_idx < array.size(trade_target)
+                    array.set(trade_target, kl_idx, take)
+                if kl_idx < array.size(trade_ticks)
+                    array.set(trade_ticks, kl_idx, na)
+                if kl_idx < array.size(trade_entry_bar)
+                    array.set(trade_entry_bar, kl_idx, na)
+                if kl_idx < array.size(trade_closed_bar)
+                    array.set(trade_closed_bar, kl_idx, na)
+
+open_trade_for_level(int kl_idx) =>
+    int idx_set = find_trade_index(trades_set, kl_idx)
+    if idx_set != -1
+        Trade t = array.get(trades_set, idx_set)
+        array.remove(trades_set, idx_set)
+        t.status := "open"
+        array.push(trades_open, t)
+        if kl_idx < array.size(trade_state)
+            array.set(trade_state, kl_idx, TE_STATE_OPEN)
+        if kl_idx < array.size(trade_opened)
+            array.set(trade_opened, kl_idx, true)
+        if kl_idx < array.size(trade_entry_bar)
+            array.set(trade_entry_bar, kl_idx, bar_index)
+        if kl_idx < array.size(kl_state)
+            array.set(kl_state, kl_idx, STATE_TESTING)
+            array.set(kl_last_test_bar, kl_idx, bar_index)
+
+reject_trade_for_level(int kl_idx) =>
+    int idx_set = find_trade_index(trades_set, kl_idx)
+    if idx_set != -1
+        array.remove(trades_set, idx_set)
+    if kl_idx < array.size(trade_state)
+        array.set(trade_state, kl_idx, TE_STATE_REJECTED)
+    if kl_idx < array.size(kl_state)
+        array.set(kl_state, kl_idx, STATE_REJECTED)
+        array.set(kl_outcome, kl_idx, "Rejected")
+        array.set(kl_realized_ticks, kl_idx, na)
+
+close_open_trade(int kl_idx, float exit_price, string outcome) =>
+    int idx_open = find_trade_index(trades_open, kl_idx)
+    if idx_open != -1
+        Trade t = array.get(trades_open, idx_open)
+        array.remove(trades_open, idx_open)
+        t.status := "closed"
+        t.pnlTicks := (exit_price - t.entry) / syminfo.mintick * t.direction
+        array.push(trades_closed, t)
+        if kl_idx < array.size(trade_ticks)
+            array.set(trade_ticks, kl_idx, t.pnlTicks)
+        finalize_close(kl_idx, outcome, t.pnlTicks)
+
+process_open_trade_bar(int kl_idx, string side, int test_count, int reject_count) =>
+    int open_idx = find_trade_index(trades_open, kl_idx)
+    if open_idx != -1
+        Trade t_open = array.get(trades_open, open_idx)
+        float stop = t_open.stop
+        float target = t_open.take
+
+        bool hit_target = side == "buy" ? (not na(target) and high >= target) : (not na(target) and low <= target)
+        bool stop_condition = side == "buy" ? (not na(stop) and close < stop) : (not na(stop) and close > stop)
+
+        if hit_target
+            array.set(kl_test_count, kl_idx, test_count + 1)
+            array.set(kl_reject_count, kl_idx, 0)
+            close_open_trade(kl_idx, target, "Profit")
+        else
+            if stop_condition
+                reject_count := reject_count + 1
+            else
+                reject_count := 0
+            array.set(kl_reject_count, kl_idx, reject_count)
+            if stop_condition and reject_count >= stopConfirmBars
+                close_open_trade(kl_idx, stop, "Loss")
 
 get_tier(float peak_ratio) =>
     if peak_ratio >= extremeRatio
@@ -468,6 +643,8 @@ create_trade_for_level(int idx) =>
                 array.set(trade_stop, idx, stop)
                 array.set(trade_target, idx, target_to_use)
                 array.set(trade_ticks, idx, na)
+
+                register_set_trade(idx)
 
                 true
 
@@ -773,18 +950,23 @@ if barstate.isconfirmed
                     tmp_f := array.get(trade_ticks, j)
                     array.set(trade_ticks, j, array.get(trade_ticks, j + 1))
                     array.set(trade_ticks, j + 1, tmp_f)
+
+                    swap_trade_indices(j, j + 1)
         
         while array.size(kl_strength) > maxKeyLevels
-            if not na(array.get(kl_entry_line, array.size(kl_entry_line) - 1))
-                line.delete(array.get(kl_entry_line, array.size(kl_entry_line) - 1))
-            if not na(array.get(kl_stop_line, array.size(kl_stop_line) - 1))
-                line.delete(array.get(kl_stop_line, array.size(kl_stop_line) - 1))
-            if not na(array.get(kl_target_line, array.size(kl_target_line) - 1))
-                line.delete(array.get(kl_target_line, array.size(kl_target_line) - 1))
-            if not na(array.get(kl_trade_label, array.size(kl_trade_label) - 1))
-                label.delete(array.get(kl_trade_label, array.size(kl_trade_label) - 1))
-            box.delete(array.get(kl_box, array.size(kl_box) - 1))
-            
+            int drop_idx = array.size(kl_entry_line) - 1
+            if not na(array.get(kl_entry_line, drop_idx))
+                line.delete(array.get(kl_entry_line, drop_idx))
+            if not na(array.get(kl_stop_line, drop_idx))
+                line.delete(array.get(kl_stop_line, drop_idx))
+            if not na(array.get(kl_target_line, drop_idx))
+                line.delete(array.get(kl_target_line, drop_idx))
+            if not na(array.get(kl_trade_label, drop_idx))
+                label.delete(array.get(kl_trade_label, drop_idx))
+            box.delete(array.get(kl_box, drop_idx))
+
+            remove_trades_for_index(drop_idx)
+
             array.pop(kl_range_top)
             array.pop(kl_range_bottom)
             array.pop(kl_poc)
@@ -888,59 +1070,23 @@ if array.size(kl_state) > 0
             
             // ENTRY ? TESTING (trade is live)
             else if current_state == STATE_ENTRY
-                // Trigger when price trades anywhere through a buffered entry band
-                float entry_price = array.get(kl_entry_price, i)
+                register_set_trade(i)
                 float entry_band = bucket_size + (rejectionBuffer * syminfo.mintick)
                 float entry_high = side == "buy" ? range_top + entry_band : range_bottom - entry_band
                 float entry_low = side == "buy" ? range_bottom - entry_band : range_top + entry_band
                 bool triggered = (low <= entry_high) and (high >= entry_low)
+                bool broke_zone = side == "buy" ? (not na(array.get(kl_stop_price, i)) and close <= array.get(kl_stop_price, i)) : (not na(array.get(kl_stop_price, i)) and close >= array.get(kl_stop_price, i))
+
                 if triggered
-                    array.set(kl_state, i, STATE_TESTING)
-                    // Record bar index when trade goes live
-                    array.set(kl_last_test_bar, i, bar_index)
-            
+                    open_trade_for_level(i)
+                    process_open_trade_bar(i, side, test_count, reject_count)
+                else if broke_zone
+                    reject_trade_for_level(i)
+
             // TESTING ? PROFIT or LOSS
             else if current_state == STATE_TESTING
-                float stop = array.get(kl_stop_price, i)
-                float target = array.get(kl_target_price, i)
-                float entry_price = array.get(kl_entry_price, i)
+                process_open_trade_bar(i, side, test_count, reject_count)
 
-                if side == "buy"
-                    // Check for profit (target hit)
-                    if not na(target) and high >= target
-                        float ticks_val = (target - entry_price) / syminfo.mintick
-                        array.set(kl_test_count, i, test_count + 1)
-                        array.set(kl_reject_count, i, 0)
-                        finalize_close(i, "Profit", ticks_val)
-                    // Check for stop (with confirmation)
-                    else if not na(stop) and close < stop
-                        reject_count := reject_count + 1
-                        array.set(kl_reject_count, i, reject_count)
-                        // Use the stop confirmation setting for losses (Option C)
-                        if reject_count >= stopConfirmBars
-                            float ticks_val = (stop - entry_price) / syminfo.mintick
-                            finalize_close(i, "Loss", ticks_val)
-                    else
-                        array.set(kl_reject_count, i, 0)
-
-                else  // sell
-                    // Check for profit (target hit)
-                    if not na(target) and low <= target
-                        float ticks_val = (entry_price - target) / syminfo.mintick
-                        array.set(kl_test_count, i, test_count + 1)
-                        array.set(kl_reject_count, i, 0)
-                        finalize_close(i, "Profit", ticks_val)
-                    // Check for stop (with confirmation)
-                    else if not na(stop) and close > stop
-                        reject_count := reject_count + 1
-                        array.set(kl_reject_count, i, reject_count)
-                        // Use the stop confirmation setting for losses (Option C)
-                        if reject_count >= stopConfirmBars
-                            float ticks_val = (entry_price - stop) / syminfo.mintick
-                            finalize_close(i, "Loss", ticks_val)
-                    else
-                        array.set(kl_reject_count, i, 0)
-            
             // PROFIT ? HELD
             else if current_state == STATE_PROFIT
                 if test_count >= 2
@@ -962,68 +1108,6 @@ if array.size(kl_state) > 0
                     bool created = create_trade_for_level(i)
                     if not created
                         array.set(kl_last_test_bar, i, bar_index)
-
-// ============================================================================
-// TRADE ENGINE V2 - EXECUTION
-// ============================================================================
-
-if array.size(trade_state) > 0
-    for i = 0 to array.size(trade_state) - 1
-        if i < array.size(kl_range_top)
-            int ts = array.get(trade_state, i)
-            string side = array.get(kl_side, i)
-            float entry = array.get(trade_entry, i)
-            float stop = array.get(trade_stop, i)
-            float target = array.get(trade_target, i)
-            float range_top = array.get(kl_range_top, i)
-            float range_bottom = array.get(kl_range_bottom, i)
-            float poc = array.get(kl_poc, i)
-
-            if ts == TE_STATE_POSSIBLE
-                bool broke_zone = false
-                if not na(stop)
-                    // Require a close beyond the buffered stop to reject, giving wicks room to breathe
-                    broke_zone := side == "buy" ? (close <= stop) : (close >= stop)
-                else
-                    broke_zone := side == "buy" ? (close < range_bottom and high < poc) : (close > range_top and low > poc)
-                if broke_zone
-                    array.set(trade_state, i, TE_STATE_REJECTED)
-                    if i < array.size(kl_state)
-                        array.set(kl_state, i, STATE_REJECTED)
-                        array.set(kl_outcome, i, "Rejected")
-                        array.set(kl_realized_ticks, i, na)
-
-            if ts == TE_STATE_POSSIBLE and not na(entry)
-                float entry_band = bucket_size + (rejectionBuffer * syminfo.mintick)
-                float entry_high = side == "buy" ? range_top + entry_band : range_bottom - entry_band
-                float entry_low = side == "buy" ? range_bottom - entry_band : range_top + entry_band
-                bool touched_entry = (low <= entry_high) and (high >= entry_low)
-                if touched_entry
-                    array.set(trade_state, i, TE_STATE_OPEN)
-                    array.set(trade_opened, i, true)
-                    if i < array.size(kl_state)
-                        array.set(kl_state, i, STATE_TESTING)
-                        array.set(kl_last_test_bar, i, bar_index)
-                    if i < array.size(trade_entry_bar)
-                        array.set(trade_entry_bar, i, bar_index)
-
-            ts := array.get(trade_state, i)
-
-            if ts == TE_STATE_OPEN
-                bool hit_target = side == "buy" ? (not na(target) and high >= target) : (not na(target) and low <= target)
-                // Use closing prices for stop hits so trades aren't cut by shallow wicks
-                bool hit_stop = side == "buy" ? (not na(stop) and close <= stop) : (not na(stop) and close >= stop)
-
-                if hit_target
-                    float ticks_val = side == "buy" ? (target - entry) / syminfo.mintick : (entry - target) / syminfo.mintick
-                    array.set(trade_ticks, i, ticks_val)
-                    array.set(trade_state, i, TE_STATE_CLOSED_WIN)
-                    finalize_close(i, "Profit", ticks_val)
-                else if hit_stop
-                    float ticks_val = side == "buy" ? -((entry - stop) / syminfo.mintick) : -((stop - entry) / syminfo.mintick)
-                    array.set(trade_ticks, i, ticks_val)
-                    array.set(trade_state, i, TE_STATE_CLOSED_LOSS)
-                    finalize_close(i, "Loss", ticks_val)
 
 // ---------------------------------------------------------------------------
 // Dev debug overlay for the most recent trade candidate
