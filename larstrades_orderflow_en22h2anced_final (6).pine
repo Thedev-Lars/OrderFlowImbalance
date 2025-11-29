@@ -1777,20 +1777,21 @@ if showTables
     array.clear(kl_poc_buffer)
     
     // Build a descending-by-price ordering so rows stack from high to low
-    for i = 0 to level_count - 1
-        float poc_val_src = array.size(kl_poc) > i ? array.get(kl_poc, i) : na
-        array.push(kl_poc_buffer, poc_val_src)
-    for n = 0 to display_count - 1
-        int best_pos = -1
-        float best_val = na
-        for j = 0 to level_count - 1
-            float poc_val = array.get(kl_poc_buffer, j)
-            if not na(poc_val) and (na(best_val) or poc_val > best_val)
-                best_val := poc_val
-                best_pos := j
-        if best_pos >= 0
-            array.push(kl_price_order, best_pos)
-            array.set(kl_poc_buffer, best_pos, na)
+    if level_count > 0
+        for i = 0 to level_count - 1
+            float poc_val_src = f_safe_get(kl_poc, i)
+            array.push(kl_poc_buffer, poc_val_src)
+        for n = 0 to display_count - 1
+            int best_pos = -1
+            float best_val = na
+            for j = 0 to level_count - 1
+                float poc_val = f_safe_get(kl_poc_buffer, j)
+                if not na(poc_val) and (na(best_val) or poc_val > best_val)
+                    best_val := poc_val
+                    best_pos := j
+            if best_pos >= 0 and best_pos < array.size(kl_poc_buffer)
+                array.push(kl_price_order, best_pos)
+                array.set(kl_poc_buffer, best_pos, na)
     
     for row = 0 to key_data_rows - 1
         int data_row = row + 2
