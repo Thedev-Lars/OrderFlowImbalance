@@ -81,7 +81,7 @@ float atr = ta.atr(atrLength)
 
 calc_bar_levels(int lookback_offset) =>
     if bar_index < lookback_offset
-        [array.new<float>(), array.new<float>(), array.new<float>()]
+        [array.new_float(), array.new_float(), array.new_float()]
     else
         float h = high[lookback_offset]
         float l = low[lookback_offset]
@@ -90,14 +90,14 @@ calc_bar_levels(int lookback_offset) =>
         float v = volume[lookback_offset]
         
         if na(h) or na(l) or na(c) or na(o) or na(v)
-            [array.new<float>(), array.new<float>(), array.new<float>()]
+            [array.new_float(), array.new_float(), array.new_float()]
         else
             float bar_buy = c > o ? v * 0.7 : v * 0.3
             float bar_sell = c > o ? v * 0.3 : v * 0.7
             
-            var array<float> prices = array.new<float>()
-            var array<float> buys = array.new<float>()
-            var array<float> sells = array.new<float>()
+            var float[] prices = array.new_float()
+            var float[] buys = array.new_float()
+            var float[] sells = array.new_float()
             
             array.clear(prices)
             array.clear(buys)
@@ -106,7 +106,7 @@ calc_bar_levels(int lookback_offset) =>
             float bar_range = h - l
             
             if bar_range <= 0 or na(bar_range)
-                [array.new<float>(), array.new<float>(), array.new<float>()]
+                [array.new_float(), array.new_float(), array.new_float()]
             else
                 int levels = math.max(1, math.floor(bar_range / bucket_size))
                 levels := math.min(levels, priceLevelsPerBar)
@@ -154,21 +154,21 @@ var string TIER_STRONG = "⭐⭐"
 var string TIER_MODERATE = "⭐"
 
 // Persistent arrays
-var array<float> kl_range_top = array.new<float>()
-var array<float> kl_range_bottom = array.new<float>()
-var array<float> kl_poc = array.new<float>()
-var array<float> kl_swing_price = array.new<float>()
-var array<string> kl_side = array.new<string>()
-var array<float> kl_strength = array.new<float>()
-var array<float> kl_peak_ratio = array.new<float>()
-var array<float> kl_avg_ratio = array.new<float>()
-var array<float> kl_poc_volume = array.new<float>()
-var array<string> kl_tier = array.new<string>()
-var array<int> kl_origin_bar = array.new<int>()
-var array<string> kl_state = array.new<string>()
-var array<int> kl_test_count = array.new<int>()
-var array<box> kl_box = array.new<box>()
-var array<int> kl_last_test_bar = array.new<int>()
+var float[] kl_range_top = array.new_float()
+var float[] kl_range_bottom = array.new_float()
+var float[] kl_poc = array.new_float()
+var float[] kl_swing_price = array.new_float()
+var string[] kl_side = array.new_string()
+var float[] kl_strength = array.new_float()
+var float[] kl_peak_ratio = array.new_float()
+var float[] kl_avg_ratio = array.new_float()
+var float[] kl_poc_volume = array.new_float()
+var string[] kl_tier = array.new_string()
+var int[] kl_origin_bar = array.new_int()
+var string[] kl_state = array.new_string()
+var int[] kl_test_count = array.new_int()
+var box[] kl_box = array.new_box()
+var int[] kl_last_test_bar = array.new_int()
 
 // Trade Engine v2 scaffolding
 var int TE_STATE_ACTIVE = 0
@@ -178,26 +178,26 @@ var int TE_STATE_CLOSED_WIN = 3
 var int TE_STATE_CLOSED_LOSS = 4
 var int TE_STATE_REJECTED = 5
 
-var array<int> trade_state = array.new<int>()
-var array<float> trade_entry = array.new<float>()
-var array<float> trade_stop = array.new<float>()
-var array<float> trade_target = array.new<float>()
-var array<float> trade_ticks = array.new<float>()
+var int[] trade_state = array.new_int()
+var float[] trade_entry = array.new_float()
+var float[] trade_stop = array.new_float()
+var float[] trade_target = array.new_float()
+var float[] trade_ticks = array.new_float()
 
 // Trade visualization arrays
-var array<float> kl_entry_price = array.new<float>()
-var array<float> kl_stop_price = array.new<float>()
-var array<float> kl_target_price = array.new<float>()
-var array<float> kl_rr_ratio = array.new<float>()
-var array<line> kl_entry_line = array.new<line>()
-var array<line> kl_stop_line = array.new<line>()
-var array<line> kl_target_line = array.new<line>()
-var array<label> kl_trade_label = array.new<label>()
-var array<int> kl_reject_count = array.new<int>()
-var array<string> kl_outcome = array.new<string>()
-var array<float> kl_realized_ticks = array.new<float>()
-var array<bool> kl_closed_logged = array.new<bool>()
-var array<int> trade_entry_bar = array.new<int>()
+var float[] kl_entry_price = array.new_float()
+var float[] kl_stop_price = array.new_float()
+var float[] kl_target_price = array.new_float()
+var float[] kl_rr_ratio = array.new_float()
+var line[] kl_entry_line = array.new_line()
+var line[] kl_stop_line = array.new_line()
+var line[] kl_target_line = array.new_line()
+var label[] kl_trade_label = array.new_label()
+var int[] kl_reject_count = array.new_int()
+var string[] kl_outcome = array.new_string()
+var float[] kl_realized_ticks = array.new_float()
+var bool[] kl_closed_logged = array.new_bool()
+var int[] trade_entry_bar = array.new_int()
 
 // Dev debug overlay objects
 var line debugEntryLine = na
@@ -206,15 +206,15 @@ var line debugTargetLine = na
 var label debugLabel = na
 
 // Persistent storage for closed trades (per session)
-var array<string> closed_side = array.new<string>()
-var array<float> closed_entry = array.new<float>()
-var array<float> closed_stop = array.new<float>()
-var array<float> closed_target = array.new<float>()
-var array<float> closed_rr = array.new<float>()
-var array<float> closed_ticks = array.new<float>()
-var array<float> closed_trade_rr = array.new<float>()
-var array<string> closed_result = array.new<string>()
-var array<box> closed_trade_boxes = array.new<box>()
+var string[] closed_side = array.new_string()
+var float[] closed_entry = array.new_float()
+var float[] closed_stop = array.new_float()
+var float[] closed_target = array.new_float()
+var float[] closed_rr = array.new_float()
+var float[] closed_ticks = array.new_float()
+var float[] closed_trade_rr = array.new_float()
+var string[] closed_result = array.new_string()
+var box[] closed_trade_boxes = array.new_box()
 
 // Session management
 var int last_session_day = 0
@@ -460,11 +460,11 @@ clear_debug_drawings() =>
 if barstate.isconfirmed
     [prices, buys, sells] = calc_bar_levels(0)
     
-    var array<float> raw_prices = array.new<float>()
-    var array<float> raw_buy_vols = array.new<float>()
-    var array<float> raw_sell_vols = array.new<float>()
-    var array<float> raw_ratios = array.new<float>()
-    var array<string> raw_sides = array.new<string>()
+    var float[] raw_prices = array.new_float()
+    var float[] raw_buy_vols = array.new_float()
+    var float[] raw_sell_vols = array.new_float()
+    var float[] raw_ratios = array.new_float()
+    var string[] raw_sides = array.new_string()
     
     array.clear(raw_prices)
     array.clear(raw_buy_vols)
