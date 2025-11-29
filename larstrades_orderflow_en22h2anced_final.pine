@@ -1517,7 +1517,8 @@ if barstate.islast and not mobileCompact
     t_row += 1
 
     int max_p = 8
-    for idx = 0 to total_levels - 1
+    for idx_offset = 0 to total_levels - 1
+        int idx = total_levels - 1 - idx_offset
         if idx < array.size(kl_state) and t_row < max_p + 3
             string st = array.get(kl_state, idx)
             if st == STATE_ENTRY or st == STATE_TESTING
