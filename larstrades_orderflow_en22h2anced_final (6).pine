@@ -93,6 +93,9 @@ float barDelta = barBuyVol - barSellVol
 float trendMA = ta.sma(close, trendPeriod)
 string trendDir = close > trendMA ? "up" : "down"
 float atr = ta.atr(atrLength)
+// Quality filters for trade idea generation
+int maxDistanceTicks = input.int(80, "Max Distance to Entry (ticks)", minval=1, group="Trade Logic")
+float minStrength = 10
 
 calc_bar_levels(int lookback_offset) =>
     if bar_index < lookback_offset
@@ -1235,10 +1238,15 @@ if array.size(kl_state) > 0
                     bool opposition_ok = opposingPct <= maxOpposingPct or ratio_i >= imbalanceRatio
                     bool trendAlign = not trendFilterEnabled or ((side == "buy" and trendDir == "up") or (side == "sell" and trendDir == "down"))
                     bool extremeLevel = ratio_i >= extremeRatio
+                    int tier_rank = get_tier_rank(array.get(kl_tier, i))
+                    float strength = array.get(kl_strength, i)
+                    float entryPrice = array.get(kl_entry_price, i)
+                    float distance = math.abs(close - entryPrice)
+                    bool qualityOK = tier_rank >= 2 and strength >= minStrength and distance <= maxDistanceTicks * syminfo.mintick
                     // A level passes the filter if it aligns with the prevailing trend
                     // and either meets the opposing-volume threshold or already clears
                     // the baseline imbalance ratio. Extreme tiers still override both.
-                    bool passFilter = not trendFilterEnabled or (trendAlign and (opposition_ok or extremeLevel)) or extremeLevel
+                    bool passFilter = (not trendFilterEnabled or (trendAlign and (opposition_ok or extremeLevel)) or extremeLevel) and qualityOK
 
                     if passFilter
                         // Use the unified swing+ATR stop and RR-banded targeting helper
