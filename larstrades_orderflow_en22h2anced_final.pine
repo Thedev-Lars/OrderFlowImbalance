@@ -1248,8 +1248,8 @@ if array.size(closed_trade_boxes) > 0
 // ============================================================================
 
 var table tbl_key = table.new(position=position.bottom_right, columns=9, rows=12, bgcolor=color.new(color.black, 80), border_width=1)
-var table tbl_ready = table.new(position=mobileCompact ? position.bottom_center : position.bottom_left, columns=mobileCompact ? 5 : 8, rows=mobileCompact ? 20 : 22, bgcolor=color.new(color.black, 80), border_width=1)
-var table tbl_live = table.new(position=mobileCompact ? position.bottom_center : position.bottom_center, columns=mobileCompact ? 5 : 10, rows=mobileCompact ? 18 : 44, bgcolor=color.new(color.black, 80), border_width=1)
+var table tbl_ready = table.new(position=mobileCompact ? position.bottom_center : position.bottom_left, columns=mobileCompact ? 5 : 8, rows=mobileCompact ? 14 : 16, bgcolor=color.new(color.black, 80), border_width=1)
+var table tbl_live = table.new(position=mobileCompact ? position.bottom_center : position.bottom_center, columns=mobileCompact ? 5 : 10, rows=mobileCompact ? 22 : 52, bgcolor=color.new(color.black, 80), border_width=1)
 var table tbl_flow = table.new(position=position.top_right, columns=mobileCompact ? 4 : 12, rows=mobileCompact ? 10 : 22, bgcolor=color.new(color.black, 80), border_width=1)
 var table tbl_mobile = table.new(position=position.bottom_center, columns=4, rows=16, bgcolor=color.new(color.black, 80), border_width=1)
 
@@ -1560,7 +1560,7 @@ if barstate.islast and not mobileCompact
     // ---------------------------------------------------------------------
     // Ready and live trade tables split for clarity, with tick distance shown.
     int total_levels = array.size(kl_state)
-    int ready_rows = mobileCompact ? 20 : 22
+    int ready_rows = mobileCompact ? 14 : 16
     int live_rows = mobileCompact ? 18 : 32
 
     // Ensure any closed trades are logged before rendering so winners/losses always appear
