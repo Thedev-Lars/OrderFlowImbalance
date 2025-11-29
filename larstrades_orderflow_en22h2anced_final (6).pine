@@ -1502,17 +1502,15 @@ else
         Trade t = array.get(trades_closed, i)
         ensure_trade_visual(t, "closed")
 
-f_clear(table tbl) =>
+f_clear_table(tbl, int cols, int rows) =>
     if not na(tbl)
-        int cols = table.get_columns(tbl)
-        int rows = table.get_rows(tbl)
         if cols > 0 and rows > 0
             table.clear(tbl, 0, 0, cols - 1, rows - 1)
 
 f_manage_table(tbl, enabled, pos, cols, rows, bg, border_width) =>
     table result = tbl
     if not enabled
-        f_clear(result)
+        f_clear_table(result, cols, rows)
         result := na
     else
         if na(result)
