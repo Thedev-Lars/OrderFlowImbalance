@@ -1351,30 +1351,36 @@ var table tbl_flow = table.new(position=mobileCompact ? position.top_center : po
 float closed_r_total = 0.0
 int closed_r_trades = 0
 int closed_r_wins = 0
-int closed_rr_count = array.size(closed_trade_rr)
-if closed_rr_count > 0
-    for r_idx = 0 to closed_rr_count - 1
-        float rr_val = array.get(closed_trade_rr, r_idx)
+float closed_tick_sum = 0.0
+int closed_trade_count = array.size(trades_closed)
+int closed_tick_wins = 0
+float closed_tick_avg = na
+float closed_r_avg = na
+float closed_tick_winrate = na
+float closed_r_winrate = na
+
+if closed_trade_count > 0
+    for t_idx = 0 to closed_trade_count - 1
+        Trade t = array.get(trades_closed, t_idx)
+        float pnl_ticks = t.pnlTicks
+        float risk_ticks = (t.take - t.entry) / syminfo.mintick
+        float rr_val = not na(pnl_ticks) and risk_ticks != 0 ? math.abs(pnl_ticks) / math.abs(risk_ticks) : na
+
         if not na(rr_val)
             closed_r_total += rr_val
             closed_r_trades += 1
             if rr_val > 0
                 closed_r_wins += 1
-float closed_r_avg = closed_r_trades > 0 ? closed_r_total / closed_r_trades : na
-float closed_r_winrate = closed_r_trades > 0 ? (closed_r_wins * 100.0) / closed_r_trades : na
-float closed_tick_sum = 0.0
-int closed_trade_count = array.size(closed_ticks)
-int closed_tick_wins = 0
-if closed_trade_count > 0
-    for t_idx = 0 to closed_trade_count - 1
-        float t_val = array.get(closed_ticks, t_idx)
-        string res_val = t_idx < array.size(closed_result) ? array.get(closed_result, t_idx) : ""
-        if not na(t_val)
-            closed_tick_sum += t_val
-        if res_val == "Profit" or (not na(t_val) and t_val > 0)
-            closed_tick_wins += 1
-float closed_tick_avg = closed_trade_count > 0 ? closed_tick_sum / closed_trade_count : na
-float closed_tick_winrate = closed_trade_count > 0 ? (closed_tick_wins * 100.0) / closed_trade_count : na
+
+        if not na(pnl_ticks)
+            closed_tick_sum += pnl_ticks
+            if pnl_ticks > 0
+                closed_tick_wins += 1
+
+    closed_tick_avg := closed_trade_count > 0 ? closed_tick_sum / closed_trade_count : na
+    closed_r_avg := closed_r_trades > 0 ? closed_r_total / closed_r_trades : na
+    closed_tick_winrate := closed_trade_count > 0 ? (closed_tick_wins * 100.0) / closed_trade_count : na
+    closed_r_winrate := closed_r_trades > 0 ? (closed_r_wins * 100.0) / closed_r_trades : na
 
 if barstate.islast and not mobileCompact
     // Performance table for closed trades
@@ -1406,33 +1412,32 @@ if barstate.islast and not mobileCompact
     table.merge_cells(tbl_performance, 0, perf_row, 5, perf_row)
 
     perf_row += 1
-    table.cell(tbl_performance, 0, perf_row, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_performance, 1, perf_row, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_performance, 2, perf_row, "Exit", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_performance, 3, perf_row, "Ticks", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_performance, 4, perf_row, "R", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_performance, 5, perf_row, "Result", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 0, perf_row, "Trade ID", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 1, perf_row, "Dir", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 2, perf_row, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 3, perf_row, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 4, perf_row, "Take", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_performance, 5, perf_row, "PnL / RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
 
     int max_perf_rows = 10
     for row_idx = 0 to max_perf_rows - 1
         int data_row = perf_row + 1 + row_idx
-        int rev_idx = array.size(closed_side) - 1 - row_idx
-        bool has_trade = rev_idx >= 0
+        int rev_idx = array.size(trades_closed) - 1 - row_idx
+        bool has_trade = rev_idx >= 0 and rev_idx < array.size(trades_closed)
         color perf_bg = row_idx % 2 == 0 ? color.new(color.black, 90) : color.new(color.black, 80)
         if has_trade
-            string s_side = array.get(closed_side, rev_idx)
-            float e_entry = array.get(closed_entry, rev_idx)
-            float exit_price = array.get(closed_result, rev_idx) == "Profit" ? array.get(closed_target, rev_idx) : array.get(closed_stop, rev_idx)
-            float ticks_val = array.get(closed_ticks, rev_idx)
-            float rr_val = array.get(closed_trade_rr, rev_idx)
-            string result_val = array.get(closed_result, rev_idx)
+            Trade t = array.get(trades_closed, rev_idx)
+            string dir_str = t.direction == 1 ? "Buy" : "Sell"
+            float risk_ticks = (t.take - t.entry) / syminfo.mintick
+            float rr_val = na(t.pnlTicks) or risk_ticks == 0 ? na : (math.abs(t.pnlTicks) / math.abs(risk_ticks))
+            string pnl_rr = na(t.pnlTicks) ? "-" : str.tostring(math.round(t.pnlTicks), "+#;-#") + " | RR " + (na(rr_val) ? "na" : str.tostring(rr_val, "#.0"))
 
-            table.cell(tbl_performance, 0, data_row, s_side == "buy" ? "Buy" : "Sell", text_color=color.white, text_size=size.small, bgcolor=perf_bg)
-            table.cell(tbl_performance, 1, data_row, str.tostring(e_entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
-            table.cell(tbl_performance, 2, data_row, str.tostring(exit_price, format.mintick), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
-            table.cell(tbl_performance, 3, data_row, str.tostring(ticks_val, "+#.0;-#.0"), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
-            table.cell(tbl_performance, 4, data_row, na(rr_val) ? "na" : str.tostring(rr_val, "#.0"), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
-            table.cell(tbl_performance, 5, data_row, result_val, text_color=color.white, text_size=size.small, bgcolor=perf_bg)
+            table.cell(tbl_performance, 0, data_row, str.tostring(t.id), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
+            table.cell(tbl_performance, 1, data_row, dir_str, text_color=color.white, text_size=size.small, bgcolor=perf_bg)
+            table.cell(tbl_performance, 2, data_row, str.tostring(t.entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
+            table.cell(tbl_performance, 3, data_row, str.tostring(t.stop, format.mintick), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
+            table.cell(tbl_performance, 4, data_row, str.tostring(t.take, format.mintick), text_color=color.white, text_size=size.small, bgcolor=perf_bg)
+            table.cell(tbl_performance, 5, data_row, pnl_rr, text_color=color.white, text_size=size.small, bgcolor=perf_bg)
         else
             color empty_bg = color.new(color.gray, 95)
             for col = 0 to 5
