@@ -1514,7 +1514,7 @@ f_manage_table(tbl, enabled, pos, cols, rows, bg, border_width) =>
         result := na
     else
         if na(result)
-            result := table.new(pos, cols, rows, bg, border_width)
+            result := table.new(position = pos, columns = cols, rows = rows, bgcolor = bg, frame_color = bg, frame_width = border_width, border_color = bg, border_width = border_width)
     result
 
 // ============================================================================
