@@ -1633,3 +1633,4 @@ if barstate.islast and not mobileCompact
                     table.cell(tbl_flow, col_start + 2, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
                     table.cell(tbl_flow, col_start + 3, current_row, "", bgcolor=empty_bg)
         current_row += 1
+ 
