@@ -1504,13 +1504,19 @@ else
 
 f_clear(table tbl) =>
     if not na(tbl)
-        table.clear(tbl)
+        int cols = table.get_columns(tbl)
+        int rows = table.get_rows(tbl)
+        if cols > 0 and rows > 0
+            table.clear(tbl, 0, 0, cols - 1, rows - 1)
 
 f_manage_table(table tbl, bool enabled, position pos, int cols, int rows, color bg, int border_width) =>
     table result = tbl
     if not enabled
         if not na(result)
-            table.clear(result)
+            int clear_cols = table.get_columns(result)
+            int clear_rows = table.get_rows(result)
+            if clear_cols > 0 and clear_rows > 0
+                table.clear(result, 0, 0, clear_cols - 1, clear_rows - 1)
         result := na
     else
         if na(result)
