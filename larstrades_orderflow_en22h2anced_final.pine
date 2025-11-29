@@ -22,11 +22,22 @@ strongRatio = input.float(5.0, "STRONG Tier Threshold", minval=4.0, step=0.5, gr
 // Display Settings
 showBoxes = input.bool(true, "Show Imbalance Boxes", group="Display")
 showTradeLines = input.bool(true, "Show Trade Lines", group="Display")
+showClosedTradeBoxes = input.bool(true, "Show Closed Trade Boxes", group="Display")
+closedTradeBoxOpacity = input.int(75, "Closed Box Opacity", minval=10, maxval=95, group="Display")
+mobileCompact = input.bool(false, "Mobile Compact Mode", group="Display")
 
 // Trade Settings
 minRR = input.float(3.0, "Minimum Risk:Reward Ratio", minval=2.0, step=0.5, group="Trade Logic")
 rejectionBuffer = input.float(5.0, "Stop Loss Buffer (Ticks)", minval=1.0, step=0.5, group="Trade Logic")
 profitConfirmBars = input.int(2, "Bars to Confirm Profit", minval=1, maxval=5, group="Trade Logic")
+maxRR_input        = input.float(4.0,  "Maximum Risk:Reward Ratio", minval=0.0, step=0.5, group="Trade Logic")
+maxRR = math.max(maxRR_input, minRR)
+atrLength    = input.int(14,     "ATR Length",                minval=1,                group="Trade Logic")
+atrMult      = input.float(0.5,  "ATR Multiplier",            minval=0.0, step=0.1,  group="Trade Logic")
+minStopTicks = input.float(25.0, "Min Stop Size (Ticks)",     minval=1.0, step=1.0,  group="Trade Logic")
+maxStopTicks = input.float(80.0, "Max Stop Size (Ticks)",     minval=5.0, step=1.0,  group="Trade Logic")
+swingLookback = input.int(10, "Swing Lookback Bars", minval=1, maxval=100, group="Trade Logic")
+showDebug = input.bool(false, "Dev: Show Stop/Target Debug", group = "Trade Logic")
 
 // ----------------------------------------------------------------------------
 // Trade Filter Settings
@@ -51,8 +62,10 @@ col_target = input.color(#ffeb3b, "Take Profit Color", group="Colors")
 // ORDER FLOW ENGINE
 // ============================================================================
 
-atr_value = ta.atr(14)
+atr_value = ta.atr(atrLength)
 bucket_size = atr_value / priceLevelsPerBar
+float swingLowCalc = ta.lowest(low, swingLookback)
+float swingHighCalc = ta.highest(high, swingLookback)
 
 float barBuyVol = close > open ? volume * 0.7 : volume * 0.3
 float barSellVol = close > open ? volume * 0.3 : volume * 0.7
@@ -67,10 +80,11 @@ float barDelta = barBuyVol - barSellVol
 // prevailing market direction.
 float trendMA = ta.sma(close, trendPeriod)
 string trendDir = close > trendMA ? "up" : "down"
+float atr = ta.atr(atrLength)
 
 calc_bar_levels(int lookback_offset) =>
     if bar_index < lookback_offset
-        [array.new<float>(), array.new<float>(), array.new<float>()]
+        [array.new_float(), array.new_float(), array.new_float()]
     else
         float h = high[lookback_offset]
         float l = low[lookback_offset]
@@ -79,14 +93,14 @@ calc_bar_levels(int lookback_offset) =>
         float v = volume[lookback_offset]
         
         if na(h) or na(l) or na(c) or na(o) or na(v)
-            [array.new<float>(), array.new<float>(), array.new<float>()]
+            [array.new_float(), array.new_float(), array.new_float()]
         else
             float bar_buy = c > o ? v * 0.7 : v * 0.3
             float bar_sell = c > o ? v * 0.3 : v * 0.7
             
-            var array<float> prices = array.new<float>()
-            var array<float> buys = array.new<float>()
-            var array<float> sells = array.new<float>()
+            var float[] prices = array.new_float()
+            var float[] buys = array.new_float()
+            var float[] sells = array.new_float()
             
             array.clear(prices)
             array.clear(buys)
@@ -95,7 +109,7 @@ calc_bar_levels(int lookback_offset) =>
             float bar_range = h - l
             
             if bar_range <= 0 or na(bar_range)
-                [array.new<float>(), array.new<float>(), array.new<float>()]
+                [array.new_float(), array.new_float(), array.new_float()]
             else
                 int levels = math.max(1, math.floor(bar_range / bucket_size))
                 levels := math.min(levels, priceLevelsPerBar)
@@ -143,20 +157,21 @@ var string TIER_STRONG = "⭐⭐"
 var string TIER_MODERATE = "⭐"
 
 // Persistent arrays
-var array<float> kl_range_top = array.new<float>()
-var array<float> kl_range_bottom = array.new<float>()
-var array<float> kl_poc = array.new<float>()
-var array<string> kl_side = array.new<string>()
-var array<float> kl_strength = array.new<float>()
-var array<float> kl_peak_ratio = array.new<float>()
-var array<float> kl_avg_ratio = array.new<float>()
-var array<float> kl_poc_volume = array.new<float>()
-var array<string> kl_tier = array.new<string>()
-var array<int> kl_origin_bar = array.new<int>()
-var array<string> kl_state = array.new<string>()
-var array<int> kl_test_count = array.new<int>()
-var array<box> kl_box = array.new<box>()
-var array<int> kl_last_test_bar = array.new<int>()
+var float[] kl_range_top = array.new_float()
+var float[] kl_range_bottom = array.new_float()
+var float[] kl_poc = array.new_float()
+var float[] kl_swing_price = array.new_float()
+var string[] kl_side = array.new_string()
+var float[] kl_strength = array.new_float()
+var float[] kl_peak_ratio = array.new_float()
+var float[] kl_avg_ratio = array.new_float()
+var float[] kl_poc_volume = array.new_float()
+var string[] kl_tier = array.new_string()
+var int[] kl_origin_bar = array.new_int()
+var string[] kl_state = array.new_string()
+var int[] kl_test_count = array.new_int()
+var box[] kl_box = array.new_box()
+var int[] kl_last_test_bar = array.new_int()
 
 // Trade Engine v2 scaffolding
 var int TE_STATE_ACTIVE = 0
@@ -166,24 +181,44 @@ var int TE_STATE_CLOSED_WIN = 3
 var int TE_STATE_CLOSED_LOSS = 4
 var int TE_STATE_REJECTED = 5
 
-var array<int> trade_state = array.new<int>()
-var array<float> trade_entry = array.new<float>()
-var array<float> trade_stop = array.new<float>()
-var array<float> trade_target = array.new<float>()
-var array<float> trade_ticks = array.new<float>()
+var int[] trade_state = array.new_int()
+var bool[] trade_opened = array.new_bool()
+var float[] trade_entry = array.new_float()
+var float[] trade_stop = array.new_float()
+var float[] trade_target = array.new_float()
+var float[] trade_ticks = array.new_float()
 
 // Trade visualization arrays
-var array<float> kl_entry_price = array.new<float>()
-var array<float> kl_stop_price = array.new<float>()
-var array<float> kl_target_price = array.new<float>()
-var array<float> kl_rr_ratio = array.new<float>()
-var array<line> kl_entry_line = array.new<line>()
-var array<line> kl_stop_line = array.new<line>()
-var array<line> kl_target_line = array.new<line>()
-var array<label> kl_trade_label = array.new<label>()
-var array<int> kl_reject_count = array.new<int>()
-var array<string> kl_outcome = array.new<string>()
-var array<float> kl_realized_ticks = array.new<float>()
+var float[] kl_entry_price = array.new_float()
+var float[] kl_stop_price = array.new_float()
+var float[] kl_target_price = array.new_float()
+var float[] kl_rr_ratio = array.new_float()
+var line[] kl_entry_line = array.new_line()
+var line[] kl_stop_line = array.new_line()
+var line[] kl_target_line = array.new_line()
+var label[] kl_trade_label = array.new_label()
+var int[] kl_reject_count = array.new_int()
+var string[] kl_outcome = array.new_string()
+var float[] kl_realized_ticks = array.new_float()
+var bool[] kl_closed_logged = array.new_bool()
+var int[] trade_entry_bar = array.new_int()
+
+// Dev debug overlay objects
+var line debugEntryLine = na
+var line debugStopLine = na
+var line debugTargetLine = na
+var label debugLabel = na
+
+// Persistent storage for closed trades (per session)
+var string[] closed_side = array.new_string()
+var float[] closed_entry = array.new_float()
+var float[] closed_stop = array.new_float()
+var float[] closed_target = array.new_float()
+var float[] closed_rr = array.new_float()
+var float[] closed_ticks = array.new_float()
+var float[] closed_trade_rr = array.new_float()
+var string[] closed_result = array.new_string()
+var box[] closed_trade_boxes = array.new_box()
 
 // Session management
 var int last_session_day = 0
@@ -203,6 +238,7 @@ if current_day != last_session_day
     array.clear(kl_range_top)
     array.clear(kl_range_bottom)
     array.clear(kl_poc)
+    array.clear(kl_swing_price)
     array.clear(kl_side)
     array.clear(kl_strength)
     array.clear(kl_peak_ratio)
@@ -225,12 +261,88 @@ if current_day != last_session_day
     array.clear(kl_reject_count)
     array.clear(kl_outcome)
     array.clear(kl_realized_ticks)
+    array.clear(kl_closed_logged)
+    array.clear(trade_entry_bar)
     array.clear(trade_state)
+    array.clear(trade_opened)
     array.clear(trade_entry)
     array.clear(trade_stop)
     array.clear(trade_target)
     array.clear(trade_ticks)
+    array.clear(closed_side)
+    array.clear(closed_entry)
+    array.clear(closed_stop)
+    array.clear(closed_target)
+    array.clear(closed_rr)
+    array.clear(closed_ticks)
+    array.clear(closed_trade_rr)
+    array.clear(closed_result)
+    if array.size(closed_trade_boxes) > 0
+        for i = 0 to array.size(closed_trade_boxes) - 1
+            box.delete(array.get(closed_trade_boxes, i))
+    array.clear(closed_trade_boxes)
     last_session_day := current_day
+
+record_closed_trade(int idx) =>
+    if idx >= 0 and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
+        float entry = array.get(kl_entry_price, idx)
+        float stop = array.get(kl_stop_price, idx)
+        float target = array.get(kl_target_price, idx)
+        string outcome_val = array.get(kl_outcome, idx)
+        string side_val = array.get(kl_side, idx)
+        float exit_price = outcome_val == "Profit" ? target : stop
+
+        float risk_price = math.abs(entry - stop)
+        float pnl_price = na
+        if side_val == "buy"
+            pnl_price := exit_price - entry
+        else if side_val == "sell"
+            pnl_price := entry - exit_price
+
+        float realized_rr = na
+        if risk_price > 0 and not na(pnl_price)
+            realized_rr := pnl_price / risk_price
+
+        array.push(closed_side, array.get(kl_side, idx))
+        array.push(closed_entry, array.get(kl_entry_price, idx))
+        array.push(closed_stop, array.get(kl_stop_price, idx))
+        array.push(closed_target, array.get(kl_target_price, idx))
+        array.push(closed_rr, array.get(kl_rr_ratio, idx))
+        array.push(closed_ticks, array.get(kl_realized_ticks, idx))
+        array.push(closed_trade_rr, realized_rr)
+        array.push(closed_result, array.get(kl_outcome, idx))
+        array.set(kl_closed_logged, idx, true)
+
+finalize_close(int idx, string outcome, float ticks_val) =>
+    // Skip if already logged or index is out of sync
+    bool base_loggable = idx >= 0 and idx < array.size(kl_state) and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
+    int ts = idx >= 0 and idx < array.size(trade_state) ? array.get(trade_state, idx) : na
+    bool trade_live = ts == TE_STATE_OPEN or ts == TE_STATE_CLOSED_WIN or ts == TE_STATE_CLOSED_LOSS
+    bool trade_entered = idx >= 0 and idx < array.size(trade_opened) ? array.get(trade_opened, idx) : false
+    bool has_prices = idx < array.size(kl_entry_price) and idx < array.size(kl_stop_price) and not na(array.get(kl_entry_price, idx)) and not na(array.get(kl_stop_price, idx))
+    bool loggable = base_loggable and trade_live and trade_entered and has_prices
+    if loggable
+        array.set(kl_realized_ticks, idx, ticks_val)
+        array.set(kl_outcome, idx, outcome)
+        array.set(kl_state, idx, STATE_CLOSED)
+        if idx < array.size(trade_state)
+            array.set(trade_state, idx, outcome == "Profit" ? TE_STATE_CLOSED_WIN : TE_STATE_CLOSED_LOSS)
+        array.set(kl_last_test_bar, idx, bar_index)
+        record_closed_trade(idx)
+
+        // Draw a persistent closed-trade box from entry to exit
+        float entry_price = array.get(kl_entry_price, idx)
+        float exit_price = outcome == "Profit" ? array.get(kl_target_price, idx) : array.get(kl_stop_price, idx)
+        int entry_bar_idx = idx < array.size(trade_entry_bar) and not na(array.get(trade_entry_bar, idx)) ? array.get(trade_entry_bar, idx) : bar_index
+        float top = math.max(entry_price, exit_price)
+        float bottom = math.min(entry_price, exit_price)
+        color box_col = color.new(color.white, closedTradeBoxOpacity)
+        box closed_box = box.new(left=entry_bar_idx, top=top, right=bar_index + 1, bottom=bottom, border_color=box_col, bgcolor=box_col, border_width=1)
+        array.push(closed_trade_boxes, closed_box)
+
+        int max_closed_boxes = 60
+        if array.size(closed_trade_boxes) > max_closed_boxes
+            box.delete(array.shift(closed_trade_boxes))
 
 get_tier(float peak_ratio) =>
     if peak_ratio >= extremeRatio
@@ -243,47 +355,99 @@ get_tier(float peak_ratio) =>
 get_tier_rank(string tier) =>
     tier == TIER_EXTREME ? 3 : tier == TIER_STRONG ? 2 : 1
 
-// Function to find next opposing imbalance for take profit
+// Function to find the nearest opposing imbalance POC for take profit
 find_next_target(int current_idx, string current_side) =>
     float current_poc = array.get(kl_poc, current_idx)
-    float current_top = array.get(kl_range_top, current_idx)
-    float current_bottom = array.get(kl_range_bottom, current_idx)
     float target = na
-    float best_rr = 0.0
-    
+    float best_dist = na
+
     if array.size(kl_poc) > 0
         for i = 0 to array.size(kl_poc) - 1
             if i != current_idx
                 string side = array.get(kl_side, i)
                 float poc = array.get(kl_poc, i)
                 string state = array.get(kl_state, i)
-                
-                // Only consider active/entry/testing levels (not rejected)
-                if state != STATE_REJECTED
-                    // Looking for opposing side
-                    if current_side == "buy" and side == "sell" and poc > current_poc
-                        float stop_buffer = rejectionBuffer * syminfo.mintick
-                        float stop = current_bottom - stop_buffer
-                        float risk = current_poc - stop
-                        float reward = poc - current_poc
-                        float rr = reward / risk
-                        
-                        if rr >= minRR and (na(target) or rr > best_rr)
-                            target := poc
-                            best_rr := rr
-                    
-                    else if current_side == "sell" and side == "buy" and poc < current_poc
-                        float stop_buffer = rejectionBuffer * syminfo.mintick
-                        float stop = current_top + stop_buffer
-                        float risk = stop - current_poc
-                        float reward = current_poc - poc
-                        float rr = reward / risk
-                        
-                        if rr >= minRR and (na(target) or rr > best_rr)
-                            target := poc
-                            best_rr := rr
-    
-    [target, best_rr]
+
+                // Only consider active/entry/testing levels (not rejected) on the opposing side
+                bool valid_buy_target = current_side == "buy" and side == "sell" and poc > current_poc
+                bool valid_sell_target = current_side == "sell" and side == "buy" and poc < current_poc
+                if state != STATE_REJECTED and (valid_buy_target or valid_sell_target)
+                    float dist = math.abs(poc - current_poc)
+                    if na(best_dist) or dist < best_dist
+                        best_dist := dist
+                        target := poc
+
+    target
+
+// Create a trade for a given key level index using the unified swing + ATR stop
+// model and RR-banded target selection. Returns true on success.
+create_trade_for_level(int idx) =>
+    string side = array.get(kl_side, idx)
+    float poc = array.get(kl_poc, idx)
+
+    if na(side)
+        false
+    else
+        float storedSwing = array.get(kl_swing_price, idx)
+        float swingPrice = na
+        if not na(storedSwing)
+            swingPrice := storedSwing
+        else
+            swingPrice := side == "buy" ? swingLowCalc : swingHighCalc
+
+        if na(storedSwing) and not na(swingPrice)
+            array.set(kl_swing_price, idx, swingPrice)
+
+        if na(swingPrice)
+            false
+        else
+            float swingDistTicks = math.abs(poc - swingPrice) / syminfo.mintick
+            float atrTicks = atr / syminfo.mintick
+            float rawStopTicks = swingDistTicks + (atrTicks * atrMult)
+            float clampedStopTicks = math.max(minStopTicks, math.min(rawStopTicks, maxStopTicks))
+            float stop = side == "buy" ? poc - clampedStopTicks * syminfo.mintick : poc + clampedStopTicks * syminfo.mintick
+            float risk = math.abs(poc - stop)
+
+            if risk <= 0
+                false
+            else
+                float level_target = find_next_target(idx, side)
+
+                float target_to_use = na
+                float rr_to_use = na
+
+                if not na(level_target)
+                    float reward_level = math.abs(level_target - poc)
+                    float rr_level = risk > 0 ? reward_level / risk : na
+                    if not na(rr_level) and rr_level >= minRR and rr_level <= maxRR
+                        target_to_use := level_target
+                        rr_to_use := rr_level
+
+                if na(target_to_use) or na(rr_to_use)
+                    float dir = side == "buy" ? 1.0 : -1.0
+                    target_to_use := poc + dir * (risk * minRR)
+                    rr_to_use := minRR
+
+                if rr_to_use > maxRR
+                    float dir = side == "buy" ? 1.0 : -1.0
+                    target_to_use := poc + dir * (risk * maxRR)
+                    rr_to_use := maxRR
+
+                array.set(kl_entry_price, idx, poc)
+                array.set(kl_stop_price, idx, stop)
+                array.set(kl_target_price, idx, target_to_use)
+                array.set(kl_rr_ratio, idx, rr_to_use)
+                array.set(kl_state, idx, STATE_ENTRY)
+                array.set(kl_last_test_bar, idx, bar_index)
+
+                array.set(trade_state, idx, TE_STATE_POSSIBLE)
+                array.set(trade_opened, idx, false)
+                array.set(trade_entry, idx, poc)
+                array.set(trade_stop, idx, stop)
+                array.set(trade_target, idx, target_to_use)
+                array.set(trade_ticks, idx, na)
+
+                true
 
 // ============================================================================
 // IMBALANCE DETECTION
@@ -292,11 +456,11 @@ find_next_target(int current_idx, string current_side) =>
 if barstate.isconfirmed
     [prices, buys, sells] = calc_bar_levels(0)
     
-    var array<float> raw_prices = array.new<float>()
-    var array<float> raw_buy_vols = array.new<float>()
-    var array<float> raw_sell_vols = array.new<float>()
-    var array<float> raw_ratios = array.new<float>()
-    var array<string> raw_sides = array.new<string>()
+    var float[] raw_prices = array.new_float()
+    var float[] raw_buy_vols = array.new_float()
+    var float[] raw_sell_vols = array.new_float()
+    var float[] raw_ratios = array.new_float()
+    var string[] raw_sides = array.new_string()
     
     array.clear(raw_prices)
     array.clear(raw_buy_vols)
@@ -332,6 +496,8 @@ if barstate.isconfirmed
             float delta = buy_vol - sell_vol
             
             bool merged = false
+            float swingLowRef = swingLowCalc
+            float swingHighRef = swingHighCalc
             if array.size(kl_range_top) > 0
                 for j = 0 to array.size(kl_range_top) - 1
                     if array.get(kl_side, j) == side
@@ -360,7 +526,12 @@ if barstate.isconfirmed
                             float peak_ratio = array.get(kl_peak_ratio, j)
                             float new_strength = (total_delta * peak_ratio) / 100
                             array.set(kl_strength, j, new_strength)
-                            
+
+                            // Seed a reference swing for this level if it has not been captured yet
+                            if na(array.get(kl_swing_price, j))
+                                float swing_ref_existing = side == "buy" ? swingLowRef : swingHighRef
+                                array.set(kl_swing_price, j, swing_ref_existing)
+
                             array.set(kl_origin_bar, j, bar_index)
                             merged := true
                             break
@@ -370,10 +541,12 @@ if barstate.isconfirmed
                 float range_bottom = price - bucket_size
                 float strength = (math.abs(delta) * ratio) / 100
                 string tier = get_tier(ratio)
-                
+                float swing_ref = side == "buy" ? swingLowRef : swingHighRef
+
                 array.push(kl_range_top, range_top)
                 array.push(kl_range_bottom, range_bottom)
                 array.push(kl_poc, price)
+                array.push(kl_swing_price, swing_ref)
                 array.push(kl_side, side)
                 array.push(kl_strength, strength)
                 array.push(kl_peak_ratio, ratio)
@@ -396,15 +569,29 @@ if barstate.isconfirmed
                 array.push(kl_target_line, na)
                 array.push(kl_trade_label, na)
                 array.push(kl_reject_count, 0)
-                
+                array.push(kl_closed_logged, false)
+
                 color box_color = side == "buy" ? color.new(col_buy, 70) : color.new(col_sell, 70)
                 box new_box = box.new(left=bar_index, top=range_top, right=bar_index + 1, bottom=range_bottom, border_color=box_color, bgcolor=box_color, border_width=1)
                 array.push(kl_box, new_box)
                 array.push(trade_state, TE_STATE_ACTIVE)
+                array.push(trade_opened, false)
                 array.push(trade_entry, na)
                 array.push(trade_stop, na)
                 array.push(trade_target, na)
                 array.push(trade_ticks, na)
+                array.push(trade_entry_bar, na)
+
+                // Immediately build a trade setup for this new key level.
+                // This uses the unified swing+ATR stop and RR-banded target logic.
+                int new_idx = array.size(kl_state) - 1
+
+                bool created_setup = create_trade_for_level(new_idx)
+
+                // If creation failed (no valid swing, zero risk, etc), leave the level in STATE_ACTIVE
+                // with empty prices so that the ACTIVE → ENTRY logic can try again on a later touch.
+                if not created_setup
+                    array.set(kl_last_test_bar, new_idx, bar_index)
     
     // Sort by tier then strength
     if array.size(kl_strength) > 1
@@ -435,7 +622,11 @@ if barstate.isconfirmed
                     tmp_f := array.get(kl_poc, j)
                     array.set(kl_poc, j, array.get(kl_poc, j + 1))
                     array.set(kl_poc, j + 1, tmp_f)
-                    
+
+                    tmp_f := array.get(kl_swing_price, j)
+                    array.set(kl_swing_price, j, array.get(kl_swing_price, j + 1))
+                    array.set(kl_swing_price, j + 1, tmp_f)
+
                     string tmp_s = array.get(kl_side, j)
                     array.set(kl_side, j, array.get(kl_side, j + 1))
                     array.set(kl_side, j + 1, tmp_s)
@@ -528,6 +719,18 @@ if barstate.isconfirmed
                     array.set(trade_state, j, array.get(trade_state, j + 1))
                     array.set(trade_state, j + 1, tmp_i)
 
+                    bool tmp_open = array.get(trade_opened, j)
+                    array.set(trade_opened, j, array.get(trade_opened, j + 1))
+                    array.set(trade_opened, j + 1, tmp_open)
+
+                    tmp_i := array.get(trade_entry_bar, j)
+                    array.set(trade_entry_bar, j, array.get(trade_entry_bar, j + 1))
+                    array.set(trade_entry_bar, j + 1, tmp_i)
+
+                    bool tmp_b = array.get(kl_closed_logged, j)
+                    array.set(kl_closed_logged, j, array.get(kl_closed_logged, j + 1))
+                    array.set(kl_closed_logged, j + 1, tmp_b)
+
                     tmp_f := array.get(trade_entry, j)
                     array.set(trade_entry, j, array.get(trade_entry, j + 1))
                     array.set(trade_entry, j + 1, tmp_f)
@@ -558,6 +761,7 @@ if barstate.isconfirmed
             array.pop(kl_range_top)
             array.pop(kl_range_bottom)
             array.pop(kl_poc)
+            array.pop(kl_swing_price)
             array.pop(kl_side)
             array.pop(kl_strength)
             array.pop(kl_peak_ratio)
@@ -581,10 +785,13 @@ if barstate.isconfirmed
             array.pop(kl_trade_label)
             array.pop(kl_reject_count)
             array.pop(trade_state)
+            array.pop(trade_opened)
             array.pop(trade_entry)
             array.pop(trade_stop)
             array.pop(trade_target)
             array.pop(trade_ticks)
+            array.pop(trade_entry_bar)
+            array.pop(kl_closed_logged)
 
 // ============================================================================
 // LIFECYCLE UPDATE WITH ENTRY STATUS AND TRADE SETUP
@@ -605,73 +812,50 @@ if array.size(kl_state) > 0
             float reject_buffer = rejectionBuffer * syminfo.mintick
 
             if current_state == STATE_PROFIT or current_state == STATE_LOSS
+                int ts_closed = i < array.size(trade_state) ? array.get(trade_state, i) : na
+                bool trade_live = ts_closed == TE_STATE_OPEN or ts_closed == TE_STATE_CLOSED_WIN or ts_closed == TE_STATE_CLOSED_LOSS
                 float entry_price = array.get(kl_entry_price, i)
                 float stop_price = array.get(kl_stop_price, i)
                 float target_price = array.get(kl_target_price, i)
-                float exit_price = current_state == STATE_PROFIT ? target_price : stop_price
-                float ticks_val = side == "buy" ? (exit_price - entry_price) / syminfo.mintick : (entry_price - exit_price) / syminfo.mintick
-                array.set(kl_realized_ticks, i, ticks_val)
-                array.set(kl_outcome, i, current_state == STATE_PROFIT ? "Profit" : "Loss")
-                array.set(kl_state, i, STATE_CLOSED)
+                bool has_exit = current_state == STATE_PROFIT ? not na(target_price) : not na(stop_price)
+                if trade_live and not na(entry_price) and not na(stop_price) and has_exit
+                    float exit_price = current_state == STATE_PROFIT ? target_price : stop_price
+                    float ticks_val = side == "buy" ? (exit_price - entry_price) / syminfo.mintick : (entry_price - exit_price) / syminfo.mintick
+                    finalize_close(i, current_state == STATE_PROFIT ? "Profit" : "Loss", ticks_val)
 
             // ACTIVE → ENTRY (find valid trade setup)
             else if current_state == STATE_ACTIVE
-                bool touching = (low <= range_top) and (high >= range_bottom)
-                if touching
-                    array.set(trade_state, i, TE_STATE_ACTIVE)
-                    // Evaluate trade filters
-                    // Compute the imbalance ratio and total volume for this level
-                    float ratio_i = array.get(kl_peak_ratio, i)
-                    float totalVol = array.get(kl_poc_volume, i)
-                    // Estimate opposing volume: for buy levels ratio = buy/sell, so sellVol ≈ totalVol/(1+ratio).
-                    // For sell levels ratio = sell/buy, so buyVol ≈ totalVol/(1+ratio).
-                    float opposingVol = totalVol / (1 + ratio_i)
-                    bool noOpposition = opposingVol <= totalVol * maxOpposingPct
-                    bool trendAlign = not trendFilterEnabled or ((side == "buy" and trendDir == "up") or (side == "sell" and trendDir == "down"))
-                    bool extremeLevel = ratio_i >= extremeRatio
-                    // A level passes the filter if it aligns with the prevailing trend
-                    // *and* has limited opposing volume, or if it is classified as
-                    // extreme (which overrides both filters).  This keeps the opposing
-                    // volume input meaningful while still allowing standout levels
-                    // through.
-                    bool passFilter = not trendFilterEnabled or (trendAlign and noOpposition) or extremeLevel
+                // Only attempt to create a setup if we do not already have entry/stop/target prices from initial creation.
+                bool has_setup = i < array.size(kl_entry_price) and not na(array.get(kl_entry_price, i))
 
-                    // Find target and validate risk:reward.  Take profits are always based on
-                    // prior opposing key imbalance levels.  Trades are only considered
-                    // when we have a valid target with sufficient RR.  No fallback to
-                    // fixed multiples is used.
-                    [target, rr] = find_next_target(i, side)
-                    if passFilter
-                        float entry = poc
-                        // Provide extra breathing room by widening the stop beyond the zone and bucket
-                        float stop_buffer = reject_buffer + (bucket_size * 2)
-                        float stop = side == "buy" ? range_bottom - stop_buffer : range_top + stop_buffer
-                        float risk = math.abs(entry - stop)
+                if not has_setup
+                    bool touching = (low <= range_top) and (high >= range_bottom)
+                    if touching
+                        array.set(trade_state, i, TE_STATE_ACTIVE)
+                        // Evaluate trade filters
+                        // Compute the imbalance ratio and total volume for this level
+                        float ratio_i = array.get(kl_peak_ratio, i)
+                        float totalVol = array.get(kl_poc_volume, i)
+                        // Estimate opposing volume: for buy levels ratio = buy/sell, so sellVol ≈ totalVol/(1+ratio).
+                        // For sell levels ratio = sell/buy, so buyVol ≈ totalVol/(1+ratio).
+                        float opposingVol = totalVol / (1 + ratio_i)
+                        float opposingPct = totalVol > 0 ? opposingVol / totalVol : 1.0
+                        bool opposition_ok = opposingPct <= maxOpposingPct or ratio_i >= imbalanceRatio
+                        bool trendAlign = not trendFilterEnabled or ((side == "buy" and trendDir == "up") or (side == "sell" and trendDir == "down"))
+                        bool extremeLevel = ratio_i >= extremeRatio
+                        // A level passes the filter if it aligns with the prevailing trend
+                        // and either meets the opposing-volume threshold or already clears
+                        // the baseline imbalance ratio. Extreme tiers still override both.
+                        bool passFilter = not trendFilterEnabled or (trendAlign and (opposition_ok or extremeLevel)) or extremeLevel
 
-                        // Prefer opposing level targets that meet RR; otherwise fall back to a synthetic target using minRR
-                        float target_to_use = target
-                        float rr_to_use = rr
-                        if na(target_to_use) or rr_to_use < minRR
-                            target_to_use := side == "buy" ? entry + (risk * minRR) : entry - (risk * minRR)
-                            rr_to_use := minRR
-
-                        if risk > 0
-                            array.set(kl_entry_price, i, entry)
-                            array.set(kl_stop_price, i, stop)
-                            array.set(kl_target_price, i, target_to_use)
-                            array.set(kl_rr_ratio, i, rr_to_use)
-                            array.set(kl_state, i, STATE_ENTRY)
-                            array.set(trade_state, i, TE_STATE_POSSIBLE)
-                            array.set(trade_entry, i, entry)
-                            array.set(trade_stop, i, stop)
-                            array.set(trade_target, i, target_to_use)
-                            array.set(trade_ticks, i, na)
-                            array.set(kl_last_test_bar, i, bar_index)
+                        if passFilter
+                            // Use the unified swing+ATR stop and RR-banded targeting helper
+                            bool created = create_trade_for_level(i)
+                            if not created
+                                array.set(kl_last_test_bar, i, bar_index)
                         else
+                            // Filters not satisfied – remain ACTIVE and record touch
                             array.set(kl_last_test_bar, i, bar_index)
-                    else
-                        // Filters not satisfied – remain ACTIVE and record touch
-                        array.set(kl_last_test_bar, i, bar_index)
             
             // ENTRY → TESTING (trade is live)
             else if current_state == STATE_ENTRY
@@ -691,50 +875,38 @@ if array.size(kl_state) > 0
                 float stop = array.get(kl_stop_price, i)
                 float target = array.get(kl_target_price, i)
                 float entry_price = array.get(kl_entry_price, i)
-                
+
                 if side == "buy"
                     // Check for profit (target hit)
                     if not na(target) and high >= target
                         float ticks_val = (target - entry_price) / syminfo.mintick
-                        array.set(kl_realized_ticks, i, ticks_val)
-                        array.set(kl_outcome, i, "Profit")
-                        array.set(kl_state, i, STATE_CLOSED)
                         array.set(kl_test_count, i, test_count + 1)
                         array.set(kl_reject_count, i, 0)
-                        array.set(kl_last_test_bar, i, bar_index)
+                        finalize_close(i, "Profit", ticks_val)
                     // Check for stop (with confirmation)
                     else if not na(stop) and close < stop
                         reject_count := reject_count + 1
                         array.set(kl_reject_count, i, reject_count)
                         if reject_count >= profitConfirmBars
                             float ticks_val = (stop - entry_price) / syminfo.mintick
-                            array.set(kl_realized_ticks, i, ticks_val)
-                            array.set(kl_outcome, i, "Loss")
-                            array.set(kl_state, i, STATE_CLOSED)
-                            array.set(kl_last_test_bar, i, bar_index)
+                            finalize_close(i, "Loss", ticks_val)
                     else
                         array.set(kl_reject_count, i, 0)
-                    
+
                 else  // sell
                     // Check for profit (target hit)
                     if not na(target) and low <= target
                         float ticks_val = (entry_price - target) / syminfo.mintick
-                        array.set(kl_realized_ticks, i, ticks_val)
-                        array.set(kl_outcome, i, "Profit")
-                        array.set(kl_state, i, STATE_CLOSED)
                         array.set(kl_test_count, i, test_count + 1)
                         array.set(kl_reject_count, i, 0)
-                        array.set(kl_last_test_bar, i, bar_index)
+                        finalize_close(i, "Profit", ticks_val)
                     // Check for stop (with confirmation)
                     else if not na(stop) and close > stop
                         reject_count := reject_count + 1
                         array.set(kl_reject_count, i, reject_count)
                         if reject_count >= profitConfirmBars
                             float ticks_val = (entry_price - stop) / syminfo.mintick
-                            array.set(kl_realized_ticks, i, ticks_val)
-                            array.set(kl_outcome, i, "Loss")
-                            array.set(kl_state, i, STATE_CLOSED)
-                            array.set(kl_last_test_bar, i, bar_index)
+                            finalize_close(i, "Loss", ticks_val)
                     else
                         array.set(kl_reject_count, i, 0)
             
@@ -742,34 +914,22 @@ if array.size(kl_state) > 0
             else if current_state == STATE_PROFIT
                 if test_count >= 2
                     array.set(kl_state, i, STATE_HELD)
-                
+
                 // Check for retouch
                 bool touching_again = (low <= range_top) and (high >= range_bottom)
                 if touching_again and (bar_index > last_test + 3)
-                    [target, rr] = find_next_target(i, side)
-                    if not na(target) and rr >= minRR
-                        float entry = poc
-                        float stop = side == "buy" ? range_bottom - reject_buffer : range_top + reject_buffer
-                        array.set(kl_entry_price, i, entry)
-                        array.set(kl_stop_price, i, stop)
-                        array.set(kl_target_price, i, target)
-                        array.set(kl_rr_ratio, i, rr)
-                        array.set(kl_state, i, STATE_ENTRY)
+                    // Retouch entries share the same stop/target sizing as first touches
+                    bool created = create_trade_for_level(i)
+                    if not created
                         array.set(kl_last_test_bar, i, bar_index)
-            
+
             // HELD
             else if current_state == STATE_HELD
                 bool touching_again = (low <= range_top) and (high >= range_bottom)
                 if touching_again and (bar_index > last_test + 3)
-                    [target, rr] = find_next_target(i, side)
-                    if not na(target) and rr >= minRR
-                        float entry = poc
-                        float stop = side == "buy" ? range_bottom - reject_buffer : range_top + reject_buffer
-                        array.set(kl_entry_price, i, entry)
-                        array.set(kl_stop_price, i, stop)
-                        array.set(kl_target_price, i, target)
-                        array.set(kl_rr_ratio, i, rr)
-                        array.set(kl_state, i, STATE_ENTRY)
+                    // Re-engage held levels with the unified trade creation rules
+                    bool created = create_trade_for_level(i)
+                    if not created
                         array.set(kl_last_test_bar, i, bar_index)
 
 // ============================================================================
@@ -809,9 +969,12 @@ if array.size(trade_state) > 0
                 bool touched_entry = (low <= entry_high) and (high >= entry_low)
                 if touched_entry
                     array.set(trade_state, i, TE_STATE_OPEN)
+                    array.set(trade_opened, i, true)
                     if i < array.size(kl_state)
                         array.set(kl_state, i, STATE_TESTING)
                         array.set(kl_last_test_bar, i, bar_index)
+                    if i < array.size(trade_entry_bar)
+                        array.set(trade_entry_bar, i, bar_index)
 
             ts := array.get(trade_state, i)
 
@@ -824,20 +987,107 @@ if array.size(trade_state) > 0
                     float ticks_val = side == "buy" ? (target - entry) / syminfo.mintick : (entry - target) / syminfo.mintick
                     array.set(trade_ticks, i, ticks_val)
                     array.set(trade_state, i, TE_STATE_CLOSED_WIN)
-                    if i < array.size(kl_state)
-                        array.set(kl_realized_ticks, i, ticks_val)
-                        array.set(kl_outcome, i, "Profit")
-                        array.set(kl_state, i, STATE_CLOSED)
-                        array.set(kl_last_test_bar, i, bar_index)
+                    finalize_close(i, "Profit", ticks_val)
                 else if hit_stop
                     float ticks_val = side == "buy" ? -((entry - stop) / syminfo.mintick) : -((stop - entry) / syminfo.mintick)
                     array.set(trade_ticks, i, ticks_val)
                     array.set(trade_state, i, TE_STATE_CLOSED_LOSS)
-                    if i < array.size(kl_state)
-                        array.set(kl_realized_ticks, i, ticks_val)
-                        array.set(kl_outcome, i, "Loss")
-                        array.set(kl_state, i, STATE_CLOSED)
-                        array.set(kl_last_test_bar, i, bar_index)
+                    finalize_close(i, "Loss", ticks_val)
+
+// ---------------------------------------------------------------------------
+// Dev debug overlay for the most recent trade candidate
+if barstate.islast
+    if showDebug and array.size(trade_state) > 0
+        int latest_idx = na
+        for idx = array.size(trade_state) - 1 to 0
+            int ts = array.get(trade_state, idx)
+            if ts == TE_STATE_POSSIBLE or ts == TE_STATE_OPEN
+                latest_idx := idx
+                break
+
+        if not na(latest_idx) and latest_idx < array.size(kl_entry_price) and latest_idx < array.size(kl_stop_price) and latest_idx < array.size(kl_target_price) and latest_idx < array.size(kl_rr_ratio) and latest_idx < array.size(kl_side)
+            float entry = array.get(kl_entry_price, latest_idx)
+            float stop = array.get(kl_stop_price, latest_idx)
+            float target = array.get(kl_target_price, latest_idx)
+            float rr = array.get(kl_rr_ratio, latest_idx)
+
+            if not na(entry) and not na(stop) and not na(target) and not na(rr)
+                int x1 = bar_index - 1
+                int x2 = bar_index
+
+                if na(debugEntryLine)
+                    debugEntryLine := line.new(x1, entry, x2, entry, color=color.new(color.silver, 40), width=1, style=line.style_solid)
+                else
+                    line.set_xy1(debugEntryLine, x1, entry)
+                    line.set_xy2(debugEntryLine, x2, entry)
+                    line.set_color(debugEntryLine, color.new(color.silver, 40))
+
+                if na(debugStopLine)
+                    debugStopLine := line.new(x1, stop, x2, stop, color=color.new(col_stop, 20), width=1, style=line.style_solid)
+                else
+                    line.set_xy1(debugStopLine, x1, stop)
+                    line.set_xy2(debugStopLine, x2, stop)
+                    line.set_color(debugStopLine, color.new(col_stop, 20))
+
+                if na(debugTargetLine)
+                    debugTargetLine := line.new(x1, target, x2, target, color=color.new(col_target, 20), width=1, style=line.style_solid)
+                else
+                    line.set_xy1(debugTargetLine, x1, target)
+                    line.set_xy2(debugTargetLine, x2, target)
+                    line.set_color(debugTargetLine, color.new(col_target, 20))
+
+                float riskTicks = math.round(math.abs(entry - stop) / syminfo.mintick * 10.0) / 10.0
+                float rrRounded = math.round(rr * 10.0) / 10.0
+                string side_val = array.get(kl_side, latest_idx)
+                float levelTarget = find_next_target(latest_idx, side_val)
+                string source = (not na(levelTarget) and math.abs(levelTarget - target) <= 0.5 * syminfo.mintick) ? "Level" : "Synthetic"
+
+                if na(debugLabel)
+                    debugLabel := label.new(bar_index, entry, "", color=color.new(color.gray, 85), textcolor=color.white, style=label.style_label_left, size=size.small)
+                else
+                    label.set_x(debugLabel, bar_index)
+                    label.set_y(debugLabel, entry)
+
+                label.set_text(debugLabel, "Risk: " + str.tostring(riskTicks) + "t\nRR: " + str.tostring(rrRounded) + " (" + source + ")")
+            else
+                if not na(debugEntryLine)
+                    line.delete(debugEntryLine)
+                    debugEntryLine := na
+                if not na(debugStopLine)
+                    line.delete(debugStopLine)
+                    debugStopLine := na
+                if not na(debugTargetLine)
+                    line.delete(debugTargetLine)
+                    debugTargetLine := na
+                if not na(debugLabel)
+                    label.delete(debugLabel)
+                    debugLabel := na
+        else
+            if not na(debugEntryLine)
+                line.delete(debugEntryLine)
+                debugEntryLine := na
+            if not na(debugStopLine)
+                line.delete(debugStopLine)
+                debugStopLine := na
+            if not na(debugTargetLine)
+                line.delete(debugTargetLine)
+                debugTargetLine := na
+            if not na(debugLabel)
+                label.delete(debugLabel)
+                debugLabel := na
+    else
+        if not na(debugEntryLine)
+            line.delete(debugEntryLine)
+            debugEntryLine := na
+        if not na(debugStopLine)
+            line.delete(debugStopLine)
+            debugStopLine := na
+        if not na(debugTargetLine)
+            line.delete(debugTargetLine)
+            debugTargetLine := na
+        if not na(debugLabel)
+            label.delete(debugLabel)
+            debugLabel := na
 
 // ============================================================================
 // RENDERING - BOXES AND TRADE LINES
@@ -933,6 +1183,8 @@ if array.size(kl_box) > 0
                         array.set(kl_trade_label, i, trade_label)
 
                 else if state == STATE_CLOSED
+                    if i < array.size(kl_closed_logged) and not array.get(kl_closed_logged, i)
+                        record_closed_trade(i)
                     line entry_line = array.get(kl_entry_line, i)
                     if not na(entry_line)
                         line.delete(entry_line)
@@ -958,14 +1210,41 @@ if array.size(kl_box) > 0
                         trade_label := label.new(bar_index, entry, "R", color = color.new(color.gray, 70), textcolor = color.white, style = label.style_label_down, size = size.normal)
                         array.set(kl_trade_label, i, trade_label)
 
+// Closed-trade visual overlays
+if array.size(closed_trade_boxes) > 0
+    color hidden_col = color.new(color.white, 100)
+    for i = 0 to array.size(closed_trade_boxes) - 1
+        box bx = array.get(closed_trade_boxes, i)
+        color box_col = showClosedTradeBoxes ? color.new(color.white, closedTradeBoxOpacity) : hidden_col
+        box.set_bgcolor(bx, box_col)
+        box.set_border_color(bx, box_col)
+
 // ============================================================================
-// TABLES (UNCHANGED)
+// TABLES
 // ============================================================================
 
-var table tbl_key = table.new(position=position.middle_left, columns=9, rows=12, bgcolor=color.new(color.black, 85), border_width=1)
+var table tbl_key = table.new(position=position.bottom_right, columns=9, rows=12, bgcolor=color.new(color.black, 80), border_width=1)
+var table tbl_trades = table.new(position=mobileCompact ? position.bottom_center : position.bottom_left, columns=mobileCompact ? 4 : 7, rows=mobileCompact ? 18 : 28, bgcolor=color.new(color.black, 80), border_width=1)
+var table tbl_flow = table.new(position=position.top_right, columns=mobileCompact ? 4 : 12, rows=mobileCompact ? 10 : 22, bgcolor=color.new(color.black, 80), border_width=1)
+var table tbl_mobile = table.new(position=position.bottom_center, columns=4, rows=16, bgcolor=color.new(color.black, 80), border_width=1)
 
-if barstate.islast
-    table.cell(tbl_key, 0, 0, "KEY IMBALANCE LEVELS", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
+float closed_r_total = 0.0
+int closed_r_trades = 0
+int closed_r_wins = 0
+int closed_rr_count = array.size(closed_trade_rr)
+if closed_rr_count > 0
+    for r_idx = 0 to closed_rr_count - 1
+        float rr_val = array.get(closed_trade_rr, r_idx)
+        if not na(rr_val)
+            closed_r_total += rr_val
+            closed_r_trades += 1
+            if rr_val > 0
+                closed_r_wins += 1
+float closed_r_avg = closed_r_trades > 0 ? closed_r_total / closed_r_trades : na
+float closed_r_winrate = closed_r_trades > 0 ? (closed_r_wins * 100.0) / closed_r_trades : na
+
+if barstate.islast and not mobileCompact
+    table.cell(tbl_key, 0, 0, "KEY IMBALANCE LEVELS", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 50))
     table.merge_cells(tbl_key, 0, 0, 8, 0)
     
     table.cell(tbl_key, 0, 1, "Range", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
@@ -978,20 +1257,42 @@ if barstate.islast
     table.cell(tbl_key, 7, 1, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
     table.cell(tbl_key, 8, 1, "Tests", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
     
-    int display_count = math.min(array.size(kl_poc), 10)
+    int level_count = array.size(kl_poc)
+    int display_count = math.min(level_count, 10)
+    var int[] kl_price_order = array.new_int()
+    var float[] kl_poc_buffer = array.new_float()
+    array.clear(kl_price_order)
+    array.clear(kl_poc_buffer)
+
+    // Build a descending-by-price ordering so rows stack from high to low
+    for i = 0 to level_count - 1
+        array.push(kl_poc_buffer, array.get(kl_poc, i))
+    for n = 0 to display_count - 1
+        int best_pos = -1
+        float best_val = na
+        for j = 0 to level_count - 1
+            float poc_val = array.get(kl_poc_buffer, j)
+            if not na(poc_val) and (na(best_val) or poc_val > best_val)
+                best_val := poc_val
+                best_pos := j
+        if best_pos >= 0
+            array.push(kl_price_order, best_pos)
+            array.set(kl_poc_buffer, best_pos, na)
+
     for row = 0 to 9
         int data_row = row + 2
-        if row < display_count
-            float range_top = array.get(kl_range_top, row)
-            float range_bottom = array.get(kl_range_bottom, row)
-            float poc = array.get(kl_poc, row)
-            string side = array.get(kl_side, row)
-            float peak_ratio = array.get(kl_peak_ratio, row)
-            string tier = array.get(kl_tier, row)
-            float strength = array.get(kl_strength, row)
-            string state = array.get(kl_state, row)
-            int tests = array.get(kl_test_count, row)
-            float rr = array.get(kl_rr_ratio, row)
+        if row < display_count and row < array.size(kl_price_order)
+            int level_idx = array.get(kl_price_order, row)
+            float range_top = array.get(kl_range_top, level_idx)
+            float range_bottom = array.get(kl_range_bottom, level_idx)
+            float poc = array.get(kl_poc, level_idx)
+            string side = array.get(kl_side, level_idx)
+            float peak_ratio = array.get(kl_peak_ratio, level_idx)
+            string tier = array.get(kl_tier, level_idx)
+            float strength = array.get(kl_strength, level_idx)
+            string state = array.get(kl_state, level_idx)
+            int tests = array.get(kl_test_count, level_idx)
+            float rr = array.get(kl_rr_ratio, level_idx)
             
             color side_color = side == "buy" ? col_buy : col_sell
             color tier_bg = tier == TIER_EXTREME ? color.new(color.orange, 92) : tier == TIER_STRONG ? color.new(color.blue, 92) : color.new(color.black, 90)
@@ -1063,30 +1364,110 @@ if barstate.islast
             for col = 0 to 8
                 table.cell(tbl_key, col, data_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
 
-var table tbl_flow = table.new(position=position.top_right, columns=12, rows=22, bgcolor=color.new(color.black, 85), border_width=1)
+if barstate.islast and mobileCompact
+    color header_bg = color.new(color.gray, 40)
+    color section_bg = color.new(color.gray, 70)
+    color muted_bg = color.new(color.gray, 85)
 
-// Table listing possible trades (levels currently in ENTRY state).  Shows
-// side, entry, stop, target, risk:reward and tier.  Positioned at the
-// bottom left of the screen.
-var table tbl_possible = table.new(position=position.bottom_left, columns=6, rows=10, bgcolor=color.new(color.black, 85), border_width=1)
+    table.cell(tbl_mobile, 0, 0, "MOBILE DASHBOARD", text_color=color.white, text_size=size.normal, bgcolor=header_bg)
+    table.merge_cells(tbl_mobile, 0, 0, 3, 0)
 
-// Table listing open trades (levels currently in TESTING state).  Shows
-// side, entry, stop, target, risk:reward and current status (e.g. progress
-// in terms of R).  Positioned at the bottom right of the screen.
-var table tbl_open = table.new(position=position.bottom_right, columns=6, rows=10, bgcolor=color.new(color.black, 85), border_width=1)
+    table.cell(tbl_mobile, 0, 1, "Open", text_color=color.white, text_size=size.small, bgcolor=section_bg)
+    table.cell(tbl_mobile, 1, 1, "Entry", text_color=color.white, text_size=size.small, bgcolor=section_bg)
+    table.cell(tbl_mobile, 2, 1, "Target", text_color=color.white, text_size=size.small, bgcolor=section_bg)
+    table.cell(tbl_mobile, 3, 1, "Status", text_color=color.white, text_size=size.small, bgcolor=section_bg)
 
-// Table listing closed trades (levels that have completed either Profit or Loss).  Shows side,
-// entry, stop, target, risk:reward, the number of ticks gained or lost, and the result.
-// Positioned at the bottom centre of the screen so that all three trade tables are visible.
-var table tbl_closed = table.new(position=position.bottom_center, columns=7, rows=10, bgcolor=color.new(color.black, 85), border_width=1)
+    string open_side = "-"
+    string open_entry = "-"
+    string open_target = "-"
+    string open_status = "-"
+    for idx_offset = 0 to array.size(kl_state) - 1
+        int idx = array.size(kl_state) - 1 - idx_offset
+        if open_side == "-" and array.get(kl_state, idx) == STATE_TESTING
+            string s_side = array.get(kl_side, idx)
+            float e_entry = array.get(kl_entry_price, idx)
+            float e_stop = array.get(kl_stop_price, idx)
+            float e_target = array.get(kl_target_price, idx)
+            float rr_val = array.get(kl_rr_ratio, idx)
+            open_side := s_side == "buy" ? "Buy" : "Sell"
+            open_entry := str.tostring(e_entry, format.mintick)
+            open_target := str.tostring(e_target, format.mintick)
+            float risk_val = math.abs(e_entry - e_stop)
+            if risk_val > 0
+                float progress = s_side == "buy" ? (close - e_entry) / risk_val : (e_entry - close) / risk_val
+                open_status := str.tostring(progress, "#.#") + "R" + (rr_val > 0 ? "/" + str.tostring(rr_val, "#.#") : "")
+            else
+                open_status := "Live"
+    table.cell(tbl_mobile, 0, 2, open_side, text_color=color.white, text_size=size.small, bgcolor=muted_bg)
+    table.cell(tbl_mobile, 1, 2, open_entry, text_color=color.white, text_size=size.small, bgcolor=muted_bg)
+    table.cell(tbl_mobile, 2, 2, open_target, text_color=color.white, text_size=size.small, bgcolor=muted_bg)
+    table.cell(tbl_mobile, 3, 2, open_status, text_color=color.white, text_size=size.small, bgcolor=muted_bg)
 
-if barstate.islast
+    table.cell(tbl_mobile, 0, 4, "Next Setup", text_color=color.white, text_size=size.small, bgcolor=section_bg)
+    table.merge_cells(tbl_mobile, 0, 4, 3, 4)
+    string setup_text = "-"
+    for idx_offset = 0 to array.size(kl_state) - 1
+        int idx = array.size(kl_state) - 1 - idx_offset
+        if setup_text == "-" and array.get(kl_state, idx) == STATE_ENTRY
+            string s_side = array.get(kl_side, idx)
+            float e_entry = array.get(kl_entry_price, idx)
+            float e_target = array.get(kl_target_price, idx)
+            float rr_val = array.get(kl_rr_ratio, idx)
+            setup_text := (s_side == "buy" ? "Buy " : "Sell ") + str.tostring(e_entry, format.mintick) + " → " + str.tostring(e_target, format.mintick) + " (" + str.tostring(rr_val, "#.#") + "R)"
+    table.cell(tbl_mobile, 0, 5, setup_text, text_color=color.white, text_size=size.small, bgcolor=muted_bg)
+    table.merge_cells(tbl_mobile, 0, 5, 3, 5)
+
+    float closed_tick_sum_mobile = 0.0
+    for idx = 0 to array.size(closed_ticks) - 1
+        float t_val = array.get(closed_ticks, idx)
+        if not na(t_val)
+            closed_tick_sum_mobile += t_val
+
+    table.cell(tbl_mobile, 0, 7, "Closed Ticks", text_color=color.white, text_size=size.small, bgcolor=section_bg)
+    table.merge_cells(tbl_mobile, 0, 7, 2, 7)
+    table.cell(tbl_mobile, 3, 7, str.tostring(math.round(closed_tick_sum_mobile), "+#;-#"), text_color=color.white, text_size=size.small, bgcolor=section_bg)
+
+    string avg_r_mobile = na(closed_r_avg) ? "na" : str.tostring(closed_r_avg, "#.0")
+    string win_r_mobile = na(closed_r_winrate) ? "na" : str.tostring(closed_r_winrate, "#") + "%"
+    table.cell(tbl_mobile, 0, 8, "Closed R", text_color=color.white, text_size=size.small, bgcolor=section_bg)
+    table.merge_cells(tbl_mobile, 0, 8, 2, 8)
+    table.cell(tbl_mobile, 3, 8, str.tostring(closed_r_total, "+#.0;-#.0") + " | " + avg_r_mobile + " | " + win_r_mobile, text_color=color.white, text_size=size.small, bgcolor=section_bg)
+
+    table.cell(tbl_mobile, 0, 9, "Recent Closed", text_color=color.white, text_size=size.small, bgcolor=header_bg)
+    table.merge_cells(tbl_mobile, 0, 9, 3, 9)
+    table.cell(tbl_mobile, 0, 10, "Side", text_color=color.white, text_size=size.small, bgcolor=section_bg)
+    table.cell(tbl_mobile, 1, 10, "Entry", text_color=color.white, text_size=size.small, bgcolor=section_bg)
+    table.cell(tbl_mobile, 2, 10, "Ticks", text_color=color.white, text_size=size.small, bgcolor=section_bg)
+    table.cell(tbl_mobile, 3, 10, "Result", text_color=color.white, text_size=size.small, bgcolor=section_bg)
+
+    int recent = math.min(5, array.size(closed_side))
+    for r = 0 to recent - 1
+        int idx = array.size(closed_side) - 1 - r
+        string s_side = array.get(closed_side, idx)
+        float e_entry = array.get(closed_entry, idx)
+        float ticks_val = array.get(closed_ticks, idx)
+        string result_val = array.get(closed_result, idx)
+        color row_bg = s_side == "buy" ? color.new(col_buy, 85) : color.new(col_sell, 85)
+        string ticks_str = na(ticks_val) ? "-" : str.tostring(math.round(ticks_val), "+#;-#")
+        int row_pos = 11 + r
+        table.cell(tbl_mobile, 0, row_pos, s_side == "buy" ? "Buy" : "Sell", text_color=color.white, text_size=size.small, bgcolor=row_bg)
+        table.cell(tbl_mobile, 1, row_pos, str.tostring(e_entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+        table.cell(tbl_mobile, 2, row_pos, ticks_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+        table.cell(tbl_mobile, 3, row_pos, result_val, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+
+    for r = 11 + recent to 15
+        for c = 0 to 3
+            table.cell(tbl_mobile, c, r, "-", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 92))
+
+if barstate.islast and not mobileCompact
+    // ---------------------------------------------------------------------
+    // Order flow table header and recent bars
     table.cell(tbl_flow, 0, 0, "ORDER FLOW HISTORY", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
     table.merge_cells(tbl_flow, 0, 0, 11, 0)
-    
+
     int safe_bars = math.min(barsToShow, bar_index + 1)
     int current_row = 1
-    
+
     for bar_idx = 0 to 2
         if bar_idx < safe_bars
             int col_start = bar_idx * 4
@@ -1095,7 +1476,7 @@ if barstate.islast
             table.cell(tbl_flow, col_start, current_row, bar_label, text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.gray, 70))
             table.merge_cells(tbl_flow, col_start, current_row, col_start + 3, current_row)
     current_row += 1
-    
+
     for bar_idx = 0 to 2
         if bar_idx < safe_bars
             int col_start = bar_idx * 4
@@ -1104,7 +1485,7 @@ if barstate.islast
             table.cell(tbl_flow, col_start + 2, current_row, "Δ", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
             table.cell(tbl_flow, col_start + 3, current_row, "🔥", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
     current_row += 1
-    
+
     for row = 0 to 7
         for bar_idx = 0 to 2
             if bar_idx < safe_bars
@@ -1134,28 +1515,44 @@ if barstate.islast
         current_row += 1
 
     // ---------------------------------------------------------------------
-    // Populate the Possible Trades and Open Trades tables
-    // These tables provide a concise overview of actionable setups (ENTRY)
-    // and live trades (TESTING).  The logic iterates over all tracked key
-    // levels and extracts relevant fields for display.
-    
-    // Populate Possible Trades table header
-    // Rename header to clarify that these are trade setups ready to be triggered
-    table.cell(tbl_possible, 0, 0, "SET TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
-    table.merge_cells(tbl_possible, 0, 0, 5, 0)
-    table.cell(tbl_possible, 0, 1, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_possible, 1, 1, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_possible, 2, 1, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_possible, 3, 1, "Target", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_possible, 4, 1, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_possible, 5, 1, "Tier", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    int p_row = 2
-    int max_p = 8
+    // Unified trades table showing possible (ENTRY) and open (TESTING) trades only.
     int total_levels = array.size(kl_state)
-    for idx = 0 to total_levels - 1
-        if p_row < max_p + 2
+    int trades_rows = mobileCompact ? 18 : 28
+    int last_trade_row = trades_rows - 1
+
+    // Ensure any closed trades are logged before rendering so winners/losses always appear
+    if array.size(trade_state) > 0 and array.size(kl_closed_logged) > 0
+        for idx = 0 to array.size(trade_state) - 1
+            int ts_closed = array.get(trade_state, idx)
+            bool is_closed = ts_closed == TE_STATE_CLOSED_WIN or ts_closed == TE_STATE_CLOSED_LOSS
+            bool opened_once = idx < array.size(trade_opened) ? array.get(trade_opened, idx) : false
+            if is_closed and opened_once and idx < array.size(kl_closed_logged) and not array.get(kl_closed_logged, idx)
+                record_closed_trade(idx)
+
+    // Table title
+    table.cell(tbl_trades, 0, 0, "TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
+    table.merge_cells(tbl_trades, 0, 0, 6, 0)
+
+    // Possible and live trades section
+    int t_row = 1
+    table.cell(tbl_trades, 0, t_row, "SET / OPEN TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 70))
+    table.merge_cells(tbl_trades, 0, t_row, 6, t_row)
+    t_row += 1
+    table.cell(tbl_trades, 0, t_row, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 1, t_row, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 2, t_row, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 3, t_row, "Target", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 4, t_row, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 5, t_row, "Tier", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_trades, 6, t_row, "Status", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    t_row += 1
+
+    int max_p = 8
+    for idx_offset = 0 to total_levels - 1
+        int idx = total_levels - 1 - idx_offset
+        if idx < array.size(kl_state) and t_row < max_p + 3
             string st = array.get(kl_state, idx)
-            if st == STATE_ENTRY
+            if st == STATE_ENTRY or st == STATE_TESTING
                 string s_side = array.get(kl_side, idx)
                 float e_entry = array.get(kl_entry_price, idx)
                 float e_stop = array.get(kl_stop_price, idx)
@@ -1164,116 +1561,25 @@ if barstate.islast
                 string e_tier = array.get(kl_tier, idx)
                 string side_str = s_side == "buy" ? "Buy" : "Sell"
                 string rr_str = na(e_rr) ? "-" : str.tostring(e_rr, "#.#")
+                string status_str = st == STATE_TESTING ? "Live" : "Ready"
                 color row_bg = s_side == "buy" ? color.new(col_buy, 90) : color.new(col_sell, 90)
                 color side_color2 = s_side == "buy" ? col_buy : col_sell
-                table.cell(tbl_possible, 0, p_row, side_str, text_color=side_color2, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_possible, 1, p_row, str.tostring(e_entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_possible, 2, p_row, str.tostring(e_stop, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_possible, 3, p_row, str.tostring(e_target, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_possible, 4, p_row, rr_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
-                table.cell(tbl_possible, 5, p_row, e_tier, text_color=color.yellow, text_size=size.small, bgcolor=row_bg)
-                p_row := p_row + 1
-    // Fill remaining rows with dashes
-    for r = p_row to max_p + 1
-        for c = 0 to 5
-            table.cell(tbl_possible, c, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
-    
-    // Populate Open Trades table header
-    table.cell(tbl_open, 0, 0, "OPEN TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
-    table.merge_cells(tbl_open, 0, 0, 5, 0)
-    table.cell(tbl_open, 0, 1, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_open, 1, 1, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_open, 2, 1, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_open, 3, 1, "Target", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_open, 4, 1, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_open, 5, 1, "Status", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    int o_row = 2
-    int max_o = 8
-    for idx = 0 to total_levels - 1
-        if o_row < max_o + 2
-            string st2 = array.get(kl_state, idx)
-            if st2 == STATE_TESTING
-                string s_side2 = array.get(kl_side, idx)
-                float e_entry2 = array.get(kl_entry_price, idx)
-                float e_stop2 = array.get(kl_stop_price, idx)
-                float e_target2 = array.get(kl_target_price, idx)
-                float e_rr2 = array.get(kl_rr_ratio, idx)
-                string side_str2 = s_side2 == "buy" ? "Buy" : "Sell"
-                string rr_str2 = na(e_rr2) ? "-" : str.tostring(e_rr2, "#.#")
-                color row_bg3 = s_side2 == "buy" ? color.new(col_buy, 90) : color.new(col_sell, 90)
-                color side_color3 = s_side2 == "buy" ? col_buy : col_sell
-                float current_price = close
-                string status_str = ""
-                if not na(e_entry2) and not na(e_stop2)
-                    float risk_val = math.abs(e_entry2 - e_stop2)
-                    if risk_val > 0
-                        if s_side2 == "buy"
-                            float progress = (current_price - e_entry2) / risk_val
-                            status_str := current_price >= e_target2 ? "Target" : (current_price <= e_stop2 ? "Stop" : str.tostring(progress, "#.#") + "R")
-                        else
-                            float progress = (e_entry2 - current_price) / risk_val
-                            status_str := current_price <= e_target2 ? "Target" : (current_price >= e_stop2 ? "Stop" : str.tostring(progress, "#.#") + "R")
-                    else
-                        status_str := "-"
-                else
-                    status_str := "-"
-                table.cell(tbl_open, 0, o_row, side_str2, text_color=side_color3, text_size=size.small, bgcolor=row_bg3)
-                table.cell(tbl_open, 1, o_row, str.tostring(e_entry2, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg3)
-                table.cell(tbl_open, 2, o_row, str.tostring(e_stop2, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg3)
-                table.cell(tbl_open, 3, o_row, str.tostring(e_target2, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg3)
-                table.cell(tbl_open, 4, o_row, rr_str2, text_color=color.white, text_size=size.small, bgcolor=row_bg3)
-                table.cell(tbl_open, 5, o_row, status_str, text_color=color.white, text_size=size.small, bgcolor=row_bg3)
-                o_row := o_row + 1
-    // Fill remaining rows with dashes
-    for r = o_row to max_o + 1
-        for c = 0 to 5
-            table.cell(tbl_open, c, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
-
-    // ---------------------------------------------------------------------
-    // Populate the Closed Trades table.  These entries reflect trades that
-    // have completed either at target (profit) or stop (loss).  For each
-    // closed trade we show the side, entry, stop, target, RR, realised ticks
-    // gained or lost and whether the outcome was a Profit or Loss.
-    table.cell(tbl_closed, 0, 0, "CLOSED TRADES", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
-    table.merge_cells(tbl_closed, 0, 0, 6, 0)
-    table.cell(tbl_closed, 0, 1, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_closed, 1, 1, "Entry", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_closed, 2, 1, "Stop", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_closed, 3, 1, "Target", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_closed, 4, 1, "RR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_closed, 5, 1, "Ticks", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_closed, 6, 1, "Result", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    int c_row = 2
-    int max_c = 8
-    for idx = 0 to total_levels - 1
-        if c_row < max_c + 2
-            string st3 = array.get(kl_state, idx)
-            // Include both Profit and Loss outcomes as closed trades
-            if st3 == STATE_CLOSED
-                string s_side3 = array.get(kl_side, idx)
-                float e_entry3 = array.get(kl_entry_price, idx)
-                float e_stop3 = array.get(kl_stop_price, idx)
-                float e_target3 = array.get(kl_target_price, idx)
-                float e_rr3 = array.get(kl_rr_ratio, idx)
-                float ticks_val = array.get(kl_realized_ticks, idx)
-                string result_str = array.get(kl_outcome, idx)
-                string side_str3 = s_side3 == "buy" ? "Buy" : "Sell"
-                string ticks_str = na(ticks_val) ? "-" : str.tostring(math.round(ticks_val), "+#;-#")
-                string rr_str3 = na(e_rr3) ? "-" : str.tostring(e_rr3, "#.#")
-                color row_bg4 = s_side3 == "buy" ? color.new(col_buy, 90) : color.new(col_sell, 90)
-                color side_color4 = s_side3 == "buy" ? col_buy : col_sell
-                table.cell(tbl_closed, 0, c_row, side_str3, text_color=side_color4, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_closed, 1, c_row, str.tostring(e_entry3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_closed, 2, c_row, str.tostring(e_stop3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_closed, 3, c_row, str.tostring(e_target3, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_closed, 4, c_row, rr_str3, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_closed, 5, c_row, ticks_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                table.cell(tbl_closed, 6, c_row, result_str, text_color=color.white, text_size=size.small, bgcolor=row_bg4)
-                c_row := c_row + 1
-    // Fill remaining rows with dashes
-    for r = c_row to max_c + 1
+                table.cell(tbl_trades, 0, t_row, side_str, text_color=side_color2, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_trades, 1, t_row, str.tostring(e_entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_trades, 2, t_row, str.tostring(e_stop, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_trades, 3, t_row, str.tostring(e_target, format.mintick), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_trades, 4, t_row, rr_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_trades, 5, t_row, e_tier, text_color=color.yellow, text_size=size.small, bgcolor=row_bg)
+                table.cell(tbl_trades, 6, t_row, status_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                t_row += 1
+    int possible_fill_end = math.min(max_p + 2, last_trade_row)
+    for r = t_row to possible_fill_end
+        for c = 0 to 6
+            table.cell(tbl_trades, c, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
+    int fill_start_row = math.min(possible_fill_end + 1, last_trade_row)
+    for r = fill_start_row to last_trade_row
         for col = 0 to 6
-            table.cell(tbl_closed, col, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
+            table.cell(tbl_trades, col, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
     
     table.cell(tbl_flow, 0, current_row, "", bgcolor=color.new(color.gray, 80))
     table.merge_cells(tbl_flow, 0, current_row, 11, current_row)
