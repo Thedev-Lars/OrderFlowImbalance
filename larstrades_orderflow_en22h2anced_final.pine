@@ -1487,7 +1487,7 @@ if barstate.islast and not mobileCompact
 
     int max_p = 8
     for idx = 0 to total_levels - 1
-        if t_row < max_p + 3
+        if idx < array.size(kl_state) and t_row < max_p + 3
             string st = array.get(kl_state, idx)
             if st == STATE_ENTRY
                 string s_side = array.get(kl_side, idx)
