@@ -442,20 +442,6 @@ create_trade_for_level(int idx) =>
 
                 true
 
-clear_debug_drawings() =>
-    if not na(debugEntryLine)
-        line.delete(debugEntryLine)
-        debugEntryLine := na
-    if not na(debugStopLine)
-        line.delete(debugStopLine)
-        debugStopLine := na
-    if not na(debugTargetLine)
-        line.delete(debugTargetLine)
-        debugTargetLine := na
-    if not na(debugLabel)
-        label.delete(debugLabel)
-        debugLabel := na
-
 // ============================================================================
 // IMBALANCE DETECTION
 // ============================================================================
@@ -1031,11 +1017,44 @@ if barstate.islast
 
                 label.set_text(debugLabel, "Risk: " + str.tostring(riskTicks) + "t\nRR: " + str.tostring(rrRounded) + " (" + source + ")")
             else
-                clear_debug_drawings()
+                if not na(debugEntryLine)
+                    line.delete(debugEntryLine)
+                    debugEntryLine := na
+                if not na(debugStopLine)
+                    line.delete(debugStopLine)
+                    debugStopLine := na
+                if not na(debugTargetLine)
+                    line.delete(debugTargetLine)
+                    debugTargetLine := na
+                if not na(debugLabel)
+                    label.delete(debugLabel)
+                    debugLabel := na
         else
-            clear_debug_drawings()
+            if not na(debugEntryLine)
+                line.delete(debugEntryLine)
+                debugEntryLine := na
+            if not na(debugStopLine)
+                line.delete(debugStopLine)
+                debugStopLine := na
+            if not na(debugTargetLine)
+                line.delete(debugTargetLine)
+                debugTargetLine := na
+            if not na(debugLabel)
+                label.delete(debugLabel)
+                debugLabel := na
     else
-        clear_debug_drawings()
+        if not na(debugEntryLine)
+            line.delete(debugEntryLine)
+            debugEntryLine := na
+        if not na(debugStopLine)
+            line.delete(debugStopLine)
+            debugStopLine := na
+        if not na(debugTargetLine)
+            line.delete(debugTargetLine)
+            debugTargetLine := na
+        if not na(debugLabel)
+            label.delete(debugLabel)
+            debugLabel := na
 
 // ============================================================================
 // RENDERING - BOXES AND TRADE LINES
