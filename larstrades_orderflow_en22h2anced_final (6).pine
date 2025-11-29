@@ -2168,7 +2168,7 @@ if showTables
         // Performance metrics section
         if unified_row < 30
             int perfRowStart = unified_row
-            table.cell(tbl_tradesUnified, 0, perfRowStart, "PERFORMANCE METRICS", text_color=color.white, text_size=size.medium, bgcolor=trade_header_bg)
+            table.cell(tbl_tradesUnified, 0, perfRowStart, "PERFORMANCE METRICS", text_color=color.white, text_size=size.normal, bgcolor=trade_header_bg)
             table.merge_cells(tbl_tradesUnified, 0, perfRowStart, 9, perfRowStart)
             unified_row := perfRowStart + 1
 
@@ -2255,9 +2255,9 @@ if showTables
                     int col_start = bar_idx * 4
                     int bar_offset = safe_bars - 1 - bar_idx
                     [prices, buys, sells] = calc_bar_levels(bar_offset)
-                    int level_count = array.size(prices)
-                    if level_count > 0 and row < level_count
-                        int idx = level_count - 1 - row
+                    int level_count_left = array.size(prices)
+                    if level_count_left > 0 and row < level_count_left
+                        int idx = level_count_left - 1 - row
                         float price = array.get(prices, idx)
                         float buy_vol = array.get(buys, idx)
                         float sell_vol = array.get(sells, idx)
@@ -2308,9 +2308,9 @@ if showTables
                     int col_start = bar_idx * 4
                     int bar_offset = safe_bars - 1 - actual_bar_idx
                     [prices, buys, sells] = calc_bar_levels(bar_offset)
-                    int level_count = array.size(prices)
-                    if level_count > 0 and row < level_count
-                        int idx = level_count - 1 - row
+                    int level_count_right = array.size(prices)
+                    if level_count_right > 0 and row < level_count_right
+                        int idx = level_count_right - 1 - row
                         float price = array.get(prices, idx)
                         float buy_vol = array.get(buys, idx)
                         float sell_vol = array.get(sells, idx)
