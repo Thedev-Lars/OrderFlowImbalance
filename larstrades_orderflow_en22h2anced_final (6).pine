@@ -490,94 +490,93 @@ remove_trades_for_index(int idx) =>
 
 ensure_trade_visual(Trade t, string state_label) =>
     bool has_prices = not na(t.entry) and not na(t.stop) and not na(t.take)
-    if not has_prices
-        return
+    if has_prices
+        int vis_idx = find_trade_visual_index(t.id)
+        if vis_idx == -1
+            line ln_new = line.new(bar_index, t.entry, bar_index + 1, t.entry, extend=extend.right, color=neutralLine, width=1, style=line.style_dotted)
+            float risk_top = math.max(t.entry, t.stop)
+            float risk_bottom = math.min(t.entry, t.stop)
+            float reward_top = math.max(t.entry, t.take)
+            float reward_bottom = math.min(t.entry, t.take)
+            box risk_box_new = box.new(bar_index, risk_top, bar_index + 1, risk_bottom, bgcolor=color.new(riskColor, 90), border_color=color.new(riskColor, 90), extend=extend.right)
+            box reward_box_new = box.new(bar_index, reward_top, bar_index + 1, reward_bottom, bgcolor=color.new(rewardColor, 90), border_color=color.new(rewardColor, 90), extend=extend.right)
+            array.push(trade_visual_ids, t.id)
+            array.push(trade_visual_entry_lines, ln_new)
+            array.push(trade_visual_risk_boxes, risk_box_new)
+            array.push(trade_visual_reward_boxes, reward_box_new)
+            vis_idx := array.size(trade_visual_ids) - 1
 
-    int vis_idx = find_trade_visual_index(t.id)
-    if vis_idx == -1
-        line ln_new = line.new(bar_index, t.entry, bar_index + 1, t.entry, extend=extend.right, color=neutralLine, width=1, style=line.style_dotted)
-        float risk_top = math.max(t.entry, t.stop)
-        float risk_bottom = math.min(t.entry, t.stop)
-        float reward_top = math.max(t.entry, t.take)
-        float reward_bottom = math.min(t.entry, t.take)
-        box risk_box_new = box.new(bar_index, risk_top, bar_index + 1, risk_bottom, bgcolor=color.new(riskColor, 90), border_color=color.new(riskColor, 90), extend=extend.right)
-        box reward_box_new = box.new(bar_index, reward_top, bar_index + 1, reward_bottom, bgcolor=color.new(rewardColor, 90), border_color=color.new(rewardColor, 90), extend=extend.right)
-        array.push(trade_visual_ids, t.id)
-        array.push(trade_visual_entry_lines, ln_new)
-        array.push(trade_visual_risk_boxes, risk_box_new)
-        array.push(trade_visual_reward_boxes, reward_box_new)
-        vis_idx := array.size(trade_visual_ids) - 1
+        line ln = array.get(trade_visual_entry_lines, vis_idx)
+        box risk_box = array.get(trade_visual_risk_boxes, vis_idx)
+        box reward_box = array.get(trade_visual_reward_boxes, vis_idx)
 
-    line ln = array.get(trade_visual_entry_lines, vis_idx)
-    box risk_box = array.get(trade_visual_risk_boxes, vis_idx)
-    box reward_box = array.get(trade_visual_reward_boxes, vis_idx)
+        if na(ln)
+            ln := line.new(bar_index, t.entry, bar_index + 1, t.entry, extend=extend.right, color=neutralLine, width=1, style=line.style_dotted)
+            array.set(trade_visual_entry_lines, vis_idx, ln)
+        if na(risk_box)
+            float risk_top = math.max(t.entry, t.stop)
+            float risk_bottom = math.min(t.entry, t.stop)
+            risk_box := box.new(bar_index, risk_top, bar_index + 1, risk_bottom, bgcolor=color.new(riskColor, 90), border_color=color.new(riskColor, 90), extend=extend.right)
+            array.set(trade_visual_risk_boxes, vis_idx, risk_box)
+        if na(reward_box)
+            float reward_top = math.max(t.entry, t.take)
+            float reward_bottom = math.min(t.entry, t.take)
+            reward_box := box.new(bar_index, reward_top, bar_index + 1, reward_bottom, bgcolor=color.new(rewardColor, 90), border_color=color.new(rewardColor, 90), extend=extend.right)
+            array.set(trade_visual_reward_boxes, vis_idx, reward_box)
 
-    if na(ln)
-        ln := line.new(bar_index, t.entry, bar_index + 1, t.entry, extend=extend.right, color=neutralLine, width=1, style=line.style_dotted)
-        array.set(trade_visual_entry_lines, vis_idx, ln)
-    if na(risk_box)
-        float risk_top = math.max(t.entry, t.stop)
-        float risk_bottom = math.min(t.entry, t.stop)
-        risk_box := box.new(bar_index, risk_top, bar_index + 1, risk_bottom, bgcolor=color.new(riskColor, 90), border_color=color.new(riskColor, 90), extend=extend.right)
-        array.set(trade_visual_risk_boxes, vis_idx, risk_box)
-    if na(reward_box)
-        float reward_top = math.max(t.entry, t.take)
-        float reward_bottom = math.min(t.entry, t.take)
-        reward_box := box.new(bar_index, reward_top, bar_index + 1, reward_bottom, bgcolor=color.new(rewardColor, 90), border_color=color.new(rewardColor, 90), extend=extend.right)
-        array.set(trade_visual_reward_boxes, vis_idx, reward_box)
+        line.set_extend(ln, extend.right)
+        line.set_y1(ln, t.entry)
+        line.set_y2(ln, t.entry)
 
-    line.set_extend(ln, extend.right)
-    line.set_y1(ln, t.entry)
-    line.set_y2(ln, t.entry)
+        float risk_top_now = math.max(t.entry, t.stop)
+        float risk_bottom_now = math.min(t.entry, t.stop)
+        float reward_top_now = math.max(t.entry, t.take)
+        float reward_bottom_now = math.min(t.entry, t.take)
 
-    float risk_top_now = math.max(t.entry, t.stop)
-    float risk_bottom_now = math.min(t.entry, t.stop)
-    float reward_top_now = math.max(t.entry, t.take)
-    float reward_bottom_now = math.min(t.entry, t.take)
+        box.set_extend(risk_box, extend.right)
+        box.set_top(risk_box, risk_top_now)
+        box.set_bottom(risk_box, risk_bottom_now)
+        box.set_extend(reward_box, extend.right)
+        box.set_top(reward_box, reward_top_now)
+        box.set_bottom(reward_box, reward_bottom_now)
 
-    box.set_extend(risk_box, extend.right)
-    box.set_top(risk_box, risk_top_now)
-    box.set_bottom(risk_box, risk_bottom_now)
-    box.set_extend(reward_box, extend.right)
-    box.set_top(reward_box, reward_top_now)
-    box.set_bottom(reward_box, reward_bottom_now)
+        color line_col = neutralLine
+        var line_style_val = line.style_dotted
+        int line_w = 1
+        color risk_bg = color.new(riskColor, 90)
+        color reward_bg = color.new(rewardColor, 90)
+        color risk_border = color.new(riskColor, 90)
+        color reward_border = color.new(rewardColor, 90)
 
-    color line_col = neutralLine
-    var line_style_val = line.style_dotted
-    int line_w = 1
-    color risk_bg = color.new(riskColor, 90)
-    color reward_bg = color.new(rewardColor, 90)
-    color risk_border = color.new(riskColor, 90)
-    color reward_border = color.new(rewardColor, 90)
+        if state_label == "open"
+            line_col := t.direction == 1 ? buyColor : sellColor
+            line_style_val := line.style_solid
+            line_w := 2
+            risk_bg := color.new(riskColor, 80)
+            reward_bg := color.new(rewardColor, 80)
+            risk_border := color.new(riskColor, 75)
+            reward_border := color.new(rewardColor, 75)
+        else if state_label == "closed"
+            bool is_win = t.pnlTicks > 0
+            line_col := color.new(t.direction == 1 ? buyColor : sellColor, 70)
+            line_style_val := line.style_solid
+            line_w := 1
+            risk_bg := color.new(riskColor, 95)
+            reward_bg := color.new(rewardColor, 95)
+            risk_border := is_win ? color.new(riskColor, 95) : color.new(color.red, 20)
+            reward_border := is_win ? color.new(color.green, 20) : color.new(rewardColor, 95)
 
-    if state_label == "open"
-        line_col := t.direction == 1 ? buyColor : sellColor
-        line_style_val := line.style_solid
-        line_w := 2
-        risk_bg := color.new(riskColor, 80)
-        reward_bg := color.new(rewardColor, 80)
-        risk_border := color.new(riskColor, 75)
-        reward_border := color.new(rewardColor, 75)
-    else if state_label == "closed"
-        bool is_win = t.pnlTicks > 0
-        line_col := color.new(t.direction == 1 ? buyColor : sellColor, 70)
-        line_style_val := line.style_solid
-        line_w := 1
-        risk_bg := color.new(riskColor, 95)
-        reward_bg := color.new(rewardColor, 95)
-        risk_border := is_win ? color.new(riskColor, 95) : color.new(color.red, 20)
-        reward_border := is_win ? color.new(color.green, 20) : color.new(rewardColor, 95)
+        line.set_color(ln, line_col)
+        line.set_style(ln, line_style_val)
+        line.set_width(ln, line_w)
 
-    line.set_color(ln, line_col)
-    line.set_style(ln, line_style_val)
-    line.set_width(ln, line_w)
+        box.set_bgcolor(risk_box, risk_bg)
+        box.set_border_color(risk_box, risk_border)
+        box.set_bgcolor(reward_box, reward_bg)
+        box.set_border_color(reward_box, reward_border)
 
-    box.set_bgcolor(risk_box, risk_bg)
-    box.set_border_color(risk_box, risk_border)
-    box.set_bgcolor(reward_box, reward_bg)
-    box.set_border_color(reward_box, reward_border)
-
-register_set_trade(int kl_idx) =>
+register_set_trade(int kl_idx, int seq) =>
+    int updated_seq = seq
     if kl_idx >= 0 and kl_idx < array.size(kl_entry_price)
         float entry = array.get(kl_entry_price, kl_idx)
         float stop = array.get(kl_stop_price, kl_idx)
@@ -594,8 +593,8 @@ register_set_trade(int kl_idx) =>
                 int existing_set = find_trade_index(trades_set, kl_idx)
                 Trade t = existing_set == -1 ? Trade.new(0, kl_idx, dir, entry, stop, take, "set", na) : array.get(trades_set, existing_set)
                 if existing_set == -1
-                    trade_seq += 1
-                    t.id := trade_seq
+                    updated_seq += 1
+                    t.id := updated_seq
                 t.kl_id := kl_idx
                 t.direction := dir
                 t.entry := entry
@@ -624,6 +623,7 @@ register_set_trade(int kl_idx) =>
                     array.set(trade_entry_bar, kl_idx, na)
                 if kl_idx < array.size(trade_closed_bar)
                     array.set(trade_closed_bar, kl_idx, na)
+    updated_seq
 
 open_trade_for_level(int kl_idx) =>
     int idx_set = find_trade_index(trades_set, kl_idx)
@@ -789,7 +789,7 @@ create_trade_for_level(int idx) =>
                 array.set(trade_target, idx, target_to_use)
                 array.set(trade_ticks, idx, na)
 
-                register_set_trade(idx)
+                trade_seq := register_set_trade(idx, trade_seq)
 
                 true
 
@@ -1217,7 +1217,7 @@ if array.size(kl_state) > 0
             
             // ENTRY ? TESTING (trade is live)
             else if current_state == STATE_ENTRY
-                register_set_trade(i)
+                trade_seq := register_set_trade(i, trade_seq)
                 float entry_price = array.get(kl_entry_price, i)
                 bool has_prices = not na(entry_price) and i < array.size(kl_stop_price) and not na(array.get(kl_stop_price, i)) and i < array.size(kl_target_price) and not na(array.get(kl_target_price, i))
                 bool triggered = has_prices and (side == "buy" ? (low <= entry_price) : (high >= entry_price))
@@ -1494,8 +1494,8 @@ else
         ensure_trade_visual(t, "closed")
 
 f_clear(tbl) =>
-    if table.is_valid(tbl)
-        table.clear(tbl, 0, 0, table.columns(tbl) - 1, table.rows(tbl) - 1)
+    if not na(tbl)
+        table.clear(tbl)
 
 // ============================================================================
 // TABLES
@@ -1509,15 +1509,15 @@ var table tbl_timeline = na
 var bool table_mobile_mode = na
 
 delete_tables() =>
-    if table.is_valid(tbl_key)
+    if not na(tbl_key)
         table.delete(tbl_key)
-    if table.is_valid(tbl_trades)
+    if not na(tbl_trades)
         table.delete(tbl_trades)
-    if table.is_valid(tbl_performance)
+    if not na(tbl_performance)
         table.delete(tbl_performance)
-    if table.is_valid(tbl_flow)
+    if not na(tbl_flow)
         table.delete(tbl_flow)
-    if table.is_valid(tbl_timeline)
+    if not na(tbl_timeline)
         table.delete(tbl_timeline)
     tbl_key := na
     tbl_trades := na
@@ -1537,22 +1537,22 @@ else
     int bottom_margin = 10
 
     if mobileCompact
-        if not table.is_valid(tbl_key)
+        if na(tbl_key)
             tbl_key := table.new(position=position.bottom_center, columns=9, rows=10, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=bottom_margin)
-        if not table.is_valid(tbl_trades)
+        if na(tbl_trades)
             tbl_trades := table.new(position=position.top_center, columns=4, rows=10, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=top_margin)
-        if not table.is_valid(tbl_timeline)
+        if na(tbl_timeline)
             tbl_timeline := table.new(position=position.top_right, columns=3, rows=10, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=top_margin)
     else
-        if not table.is_valid(tbl_key)
+        if na(tbl_key)
             tbl_key := table.new(position=position.bottom_right, columns=9, rows=12, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=bottom_margin)
-        if not table.is_valid(tbl_trades)
+        if na(tbl_trades)
             tbl_trades := table.new(position=position.top_left, columns=7, rows=16, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=top_margin)
-        if not table.is_valid(tbl_performance)
+        if na(tbl_performance)
             tbl_performance := table.new(position=position.bottom_left, columns=6, rows=20, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=bottom_margin)
-        if not table.is_valid(tbl_flow)
+        if na(tbl_flow)
             tbl_flow := table.new(position=position.top_right, columns=12, rows=22, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=top_margin)
-        if not table.is_valid(tbl_timeline)
+        if na(tbl_timeline)
             tbl_timeline := table.new(position=position.top_right, columns=3, rows=20, bgcolor=color.new(color.black, 80), border_width=1, x=0, y=top_margin + 260)
 
 if showTables
@@ -1665,7 +1665,7 @@ if showTables
         table.cell(tbl_key, 8, 1, "Tests", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
 
         int level_count = array.size(kl_poc)
-        int key_rows = table.rows(tbl_key)
+        int key_rows = mobileCompact ? 10 : 12
         int key_data_rows = math.max(key_rows - 2, 0)
         int display_count = math.min(level_count, key_data_rows)
         var int[] kl_price_order = array.new_int()
@@ -1793,7 +1793,7 @@ if showTables
         table.cell(tbl_key, 8, 1, "Tests", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
 
         int level_count_mobile = array.size(kl_poc)
-        int key_rows_mobile = table.rows(tbl_key)
+        int key_rows_mobile = 10
         int key_data_mobile = math.max(key_rows_mobile - 2, 0)
         int display_mobile = math.min(level_count_mobile, key_data_mobile)
         var int[] kl_order_mobile = array.new_int()
@@ -1905,7 +1905,7 @@ if showTables
         t_row += 1
 
         int total_levels = array.size(kl_state)
-        int max_rows = table.rows(tbl_trades) - 2
+        int max_rows = (mobileCompact ? 10 : 16) - 2
         float tick_size = syminfo.mintick
 
         for idx_offset = 0 to total_levels - 1
@@ -1928,7 +1928,7 @@ if showTables
                     table.cell(tbl_trades, 3, t_row, na(e_rr) ? "-" : str.tostring(e_rr, "#.#"), text_color=color.white, text_size=size.small, bgcolor=row_bg)
                     t_row += 1
 
-        int last_row = table.rows(tbl_trades) - 1
+        int last_row = (mobileCompact ? 10 : 16) - 1
         for r = t_row to last_row
             table.cell(tbl_trades, 0, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
             table.cell(tbl_trades, 1, r, "-", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.gray, 95))
@@ -2112,9 +2112,9 @@ if showTables
                         table.cell(tbl_flow, col_start + 3, current_row, "", bgcolor=empty_bg)
             current_row += 1
 
-        if table.is_valid(tbl_timeline)
-            int tl_rows = table.rows(tbl_timeline)
-            int tl_cols = table.columns(tbl_timeline)
+        if not na(tbl_timeline)
+            int tl_rows = mobileCompact ? 10 : 20
+            int tl_cols = 3
             int tl_header = 0
             int tl_max_data = math.max(tl_rows - 1, 0)
             table.cell(tbl_timeline, 0, tl_header, "TRADE TIMELINE", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
