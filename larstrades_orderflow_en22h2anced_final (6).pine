@@ -239,6 +239,11 @@ var int[] trade_visual_ids = array.new_int()
 var line[] trade_visual_entry_lines = array.new_line()
 var box[] trade_visual_risk_boxes = array.new_box()
 var box[] trade_visual_reward_boxes = array.new_box()
+var line ot_entryLine = na
+var line ot_stopLine = na
+var line ot_targetLine = na
+var box ot_riskBox = na
+var box ot_rewardBox = na
 
 f_safe_get(arr, int idx) =>
     idx >= 0 and idx < array.size(arr) ? array.get(arr, idx) : na
@@ -1524,6 +1529,110 @@ if array.size(closed_trade_boxes) > 0
         color box_col = showClosedTradeBoxes ? color.new(color.white, closedTradeBoxOpacity) : hidden_col
         box.set_bgcolor(bx, box_col)
         box.set_border_color(bx, box_col)
+
+// On-chart visuals for the active open trade (TE_STATE_OPEN)
+if not showTradeVisuals
+    if not na(ot_entryLine)
+        line.delete(ot_entryLine)
+        ot_entryLine := na
+    if not na(ot_stopLine)
+        line.delete(ot_stopLine)
+        ot_stopLine := na
+    if not na(ot_targetLine)
+        line.delete(ot_targetLine)
+        ot_targetLine := na
+    if not na(ot_riskBox)
+        box.delete(ot_riskBox)
+        ot_riskBox := na
+    if not na(ot_rewardBox)
+        box.delete(ot_rewardBox)
+        ot_rewardBox := na
+else
+    bool has_active_open = false
+    int openIdx = na
+    if array.size(trade_state) > 0
+        for oi = 0 to array.size(trade_state) - 1
+            if array.get(trade_state, oi) == TE_STATE_OPEN
+                openIdx := oi
+                has_active_open := true
+                break
+
+    bool visuals_active = false
+    if has_active_open and not na(openIdx)
+        float open_entry = openIdx < array.size(trade_entry) ? array.get(trade_entry, openIdx) : na
+        float open_stop = openIdx < array.size(kl_stop_price) ? array.get(kl_stop_price, openIdx) : na
+        float open_target = openIdx < array.size(kl_target_price) ? array.get(kl_target_price, openIdx) : na
+        string open_side = openIdx < array.size(kl_side) ? array.get(kl_side, openIdx) : ""
+
+        bool have_prices = not na(open_entry) and not na(open_stop) and not na(open_target) and (open_side == "buy" or open_side == "sell")
+
+        if have_prices
+            visuals_active := true
+
+            if na(ot_entryLine)
+                ot_entryLine := line.new(bar_index, open_entry, bar_index, open_entry, extend = extend.right)
+                line.set_width(ot_entryLine, 2)
+            if na(ot_stopLine)
+                ot_stopLine := line.new(bar_index, open_stop, bar_index, open_stop, extend = extend.right)
+                line.set_width(ot_stopLine, 2)
+            if na(ot_targetLine)
+                ot_targetLine := line.new(bar_index, open_target, bar_index, open_target, extend = extend.right)
+                line.set_width(ot_targetLine, 2)
+
+            line.set_xy1(ot_entryLine, bar_index - 1, open_entry)
+            line.set_xy2(ot_entryLine, bar_index, open_entry)
+            line.set_color(ot_entryLine, color.new(color.white, 0))
+            line.set_style(ot_entryLine, line.style_solid)
+
+            line.set_xy1(ot_stopLine, bar_index - 1, open_stop)
+            line.set_xy2(ot_stopLine, bar_index, open_stop)
+            line.set_color(ot_stopLine, open_side == "buy" ? color.red : color.green)
+            line.set_style(ot_stopLine, line.style_solid)
+
+            line.set_xy1(ot_targetLine, bar_index - 1, open_target)
+            line.set_xy2(ot_targetLine, bar_index, open_target)
+            line.set_color(ot_targetLine, open_side == "buy" ? color.green : color.red)
+            line.set_style(ot_targetLine, line.style_solid)
+
+            if na(ot_riskBox)
+                ot_riskBox := box.new(bar_index, open_entry, bar_index, open_stop)
+            if na(ot_rewardBox)
+                ot_rewardBox := box.new(bar_index, open_entry, bar_index, open_target)
+
+            int bn = bar_index
+            int future = bar_index + 30
+
+            float risk_top = open_side == "buy" ? open_entry : open_stop
+            float risk_bottom = open_side == "buy" ? open_stop : open_entry
+            float reward_top = open_side == "buy" ? open_target : open_entry
+            float reward_bottom = open_side == "buy" ? open_entry : open_target
+
+            box.set_lefttop(ot_riskBox, bn - 1, risk_top)
+            box.set_rightbottom(ot_riskBox, future, risk_bottom)
+            box.set_bgcolor(ot_riskBox, color.new(color.red, 85))
+            box.set_border_color(ot_riskBox, color.new(color.red, 85))
+
+            box.set_lefttop(ot_rewardBox, bn - 1, reward_top)
+            box.set_rightbottom(ot_rewardBox, future, reward_bottom)
+            box.set_bgcolor(ot_rewardBox, color.new(color.green, 85))
+            box.set_border_color(ot_rewardBox, color.new(color.green, 85))
+
+    if not visuals_active
+        if not na(ot_entryLine)
+            line.delete(ot_entryLine)
+            ot_entryLine := na
+        if not na(ot_stopLine)
+            line.delete(ot_stopLine)
+            ot_stopLine := na
+        if not na(ot_targetLine)
+            line.delete(ot_targetLine)
+            ot_targetLine := na
+        if not na(ot_riskBox)
+            box.delete(ot_riskBox)
+            ot_riskBox := na
+        if not na(ot_rewardBox)
+            box.delete(ot_rewardBox)
+            ot_rewardBox := na
 
 // Trade visuals based on lifecycle arrays
 if not showTradeVisuals
