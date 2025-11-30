@@ -2113,65 +2113,6 @@ if showTables
                 table.merge_cells(tbl_tradesUnified, 0, unified_row, 9, unified_row)
                 unified_row += 1
 
-        // Performance metrics section
-        if unified_row < 30
-            int perfRowStart = unified_row
-        if not mobileCompact
-            table.cell(tbl_tradesUnified, 0, perfRowStart, "PERFORMANCE METRICS", text_color=color.white, text_size=size.normal, bgcolor=trade_header_bg)
-            table.merge_cells(tbl_tradesUnified, 0, perfRowStart, 9, perfRowStart)
-            unified_row := perfRowStart + 1
-
-            int ct = array.size(closed_ticks)
-            float sumTicks = 0.0
-            float sumRR = 0.0
-            int wins = 0
-
-            for k = 0 to ct - 1
-                float t = k < array.size(closed_ticks) ? array.get(closed_ticks, k) : na
-                float rr_val = k < array.size(closed_trade_rr) ? array.get(closed_trade_rr, k) : na
-                string outcome = k < array.size(closed_result) ? array.get(closed_result, k) : ""
-
-                if not na(t)
-                    sumTicks += t
-                if not na(rr_val)
-                    sumRR += rr_val
-                if outcome == "Profit"
-                    wins += 1
-
-            float winRate = ct > 0 ? (wins / ct) * 100 : na
-            float avgTicks = ct > 0 ? sumTicks / ct : na
-            float avgRR = ct > 0 ? sumRR / ct : na
-            float expectancy = avgTicks
-
-            int perf_row = unified_row
-            string ct_str = str.tostring(ct)
-            string win_rate_str = na(winRate) ? "-" : str.tostring(winRate, "#.#")
-            string avg_ticks_str = na(avgTicks) ? "-" : str.tostring(avgTicks, "#.#")
-            string avg_rr_str = na(avgRR) ? "-" : str.tostring(avgRR, "#.#")
-            string expectancy_str = na(expectancy) ? "-" : str.tostring(expectancy, "#.#")
-
-            if perf_row < 30
-                table.cell(tbl_tradesUnified, 0, perf_row, "Total Trades", text_color=color.white, text_size=size.small)
-                table.cell(tbl_tradesUnified, 1, perf_row, ct_str, text_color=color.white, text_size=size.small)
-                perf_row += 1
-            if perf_row < 30
-                table.cell(tbl_tradesUnified, 0, perf_row, "Win Rate (%)", text_color=color.white, text_size=size.small)
-                table.cell(tbl_tradesUnified, 1, perf_row, win_rate_str, text_color=color.white, text_size=size.small)
-                perf_row += 1
-            if perf_row < 30
-                table.cell(tbl_tradesUnified, 0, perf_row, "Avg Ticks", text_color=color.white, text_size=size.small)
-                table.cell(tbl_tradesUnified, 1, perf_row, avg_ticks_str, text_color=color.white, text_size=size.small)
-                perf_row += 1
-            if perf_row < 30
-                table.cell(tbl_tradesUnified, 0, perf_row, "Avg RR", text_color=color.white, text_size=size.small)
-                table.cell(tbl_tradesUnified, 1, perf_row, avg_rr_str, text_color=color.white, text_size=size.small)
-                perf_row += 1
-            if perf_row < 30
-                table.cell(tbl_tradesUnified, 0, perf_row, "Expectancy", text_color=color.white, text_size=size.small)
-                table.cell(tbl_tradesUnified, 1, perf_row, expectancy_str, text_color=color.white, text_size=size.small)
-                perf_row += 1
-            unified_row := perf_row
-
         if not mobileCompact and not na(tbl_flow)
             // ---------------------------------------------------------------------
             // Order flow table header and recent bars
