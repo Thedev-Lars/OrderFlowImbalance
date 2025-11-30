@@ -187,6 +187,7 @@ var int[] kl_origin_bar = array.new_int()
 var string[] kl_state = array.new_string()
 var int[] kl_test_count = array.new_int()
 var box[] kl_box = array.new_box()
+var color[] kl_box_outcome_color = array.new_color()
 var int[] kl_last_test_bar = array.new_int()
 
 // Trade Engine v2 scaffolding
@@ -356,6 +357,7 @@ if current_day != last_session_day
     array.clear(kl_state)
     array.clear(kl_test_count)
     array.clear(kl_box)
+    array.clear(kl_box_outcome_color)
     array.clear(kl_last_test_bar)
     array.clear(kl_entry_price)
     array.clear(kl_stop_price)
@@ -437,6 +439,8 @@ finalize_close(int idx, string outcome, float ticks_val) =>
             array.set(kl_realized_ticks, idx, ticks_val)
             array.set(kl_outcome, idx, outcome)
             array.set(kl_state, idx, STATE_CLOSED)
+            if idx < array.size(kl_box_outcome_color)
+                array.set(kl_box_outcome_color, idx, outcome == "Profit" ? color.yellow : color.red)
             if idx < array.size(trade_state)
                 array.set(trade_state, idx, outcome == "Profit" ? TE_STATE_CLOSED_WIN : TE_STATE_CLOSED_LOSS)
             array.set(kl_last_test_bar, idx, bar_index)
@@ -968,6 +972,7 @@ if barstate.isconfirmed
                 array.push(kl_rr_ratio, na)
                 array.push(kl_outcome, "")
                 array.push(kl_realized_ticks, na)
+                array.push(kl_box_outcome_color, na)
                 // Initialize line/label IDs as na (uninitialized)
                 array.push(kl_entry_line, na)
                 array.push(kl_stop_line, na)
@@ -1088,10 +1093,14 @@ if barstate.isconfirmed
                     tmp_f := array.get(kl_realized_ticks, j)
                     array.set(kl_realized_ticks, j, array.get(kl_realized_ticks, j + 1))
                     array.set(kl_realized_ticks, j + 1, tmp_f)
-                    
+
                     box tmp_box = array.get(kl_box, j)
                     array.set(kl_box, j, array.get(kl_box, j + 1))
                     array.set(kl_box, j + 1, tmp_box)
+
+                    color tmp_col = array.get(kl_box_outcome_color, j)
+                    array.set(kl_box_outcome_color, j, array.get(kl_box_outcome_color, j + 1))
+                    array.set(kl_box_outcome_color, j + 1, tmp_col)
                     
                     tmp_f := array.get(kl_entry_price, j)
                     array.set(kl_entry_price, j, array.get(kl_entry_price, j + 1))
@@ -1202,6 +1211,7 @@ if barstate.isconfirmed
             array.pop(kl_outcome)
             array.pop(kl_realized_ticks)
             array.pop(kl_box)
+            array.pop(kl_box_outcome_color)
             array.pop(kl_entry_price)
             array.pop(kl_stop_price)
             array.pop(kl_target_price)
@@ -1446,8 +1456,12 @@ if array.size(kl_box) > 0
             string state = array.get(kl_state, i)
             string side = array.get(kl_side, i)
             string tier = array.get(kl_tier, i)
-            
+
             color base_color = side == "buy" ? col_buy : col_sell
+            if state == STATE_CLOSED and i < array.size(kl_box_outcome_color)
+                color outcome_col = array.get(kl_box_outcome_color, i)
+                if not na(outcome_col)
+                    base_color := outcome_col
             
             // Box rendering
             if showBoxes
