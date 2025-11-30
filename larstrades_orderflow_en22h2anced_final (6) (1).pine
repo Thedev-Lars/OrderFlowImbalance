@@ -1758,16 +1758,16 @@ else
     tbl_mobile := f_manage_table(tbl_mobile, false, position.bottom_center, 4, 10, color.new(color.black, 80), 1)
     tbl_tradesUnified := f_manage_table(tbl_tradesUnified, false, position.top_center, 10, 30, color.new(color.black, 80), 1)
 
-int perf_total_trades = 0
-int perf_wins = 0
-int perf_losses = 0
-float perf_win_rate_pct = na
-float perf_net_ticks = 0.0
-float perf_avg_win = na
-float perf_avg_loss = na
-float perf_expectancy = na
-int perf_header_text_size = na
-int perf_row_text_size = na
+var int perf_total_trades = 0
+var int perf_wins = 0
+var int perf_losses = 0
+var float perf_win_rate_pct = na
+var float perf_net_ticks = 0.0
+var float perf_avg_win = na
+var float perf_avg_loss = na
+var float perf_expectancy = na
+var int perf_header_text_size = na
+var int perf_row_text_size = na
 
 if barstate.islast
     perf_header_text_size := mobileCompact ? size.small : size.normal
