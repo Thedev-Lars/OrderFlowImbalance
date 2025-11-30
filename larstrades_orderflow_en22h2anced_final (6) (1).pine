@@ -902,7 +902,8 @@ if barstate.isconfirmed
             float sell_vol = array.get(raw_sell_vols, i)
             float ratio = array.get(raw_ratios, i)
             string side = array.get(raw_sides, i)
-            float delta = buy_vol - sell_vol
+            float imbalance_frac = (ratio - 1) / (ratio + 1)
+            float delta = (buy_vol + sell_vol) * (side == "buy" ? imbalance_frac : -imbalance_frac)
             
             bool merged = false
             float swingLowRef = swingLowCalc
@@ -940,7 +941,7 @@ if barstate.isconfirmed
 
                             float peak_ratio = array.get(kl_peak_ratio, j)
                             float smart_delta = updated_vol > 0 ? (math.abs(updated_delta) / updated_vol) * 100 : 0
-                            float new_strength = smart_delta * peak_ratio
+                            float new_strength = smart_delta * (peak_ratio + 1.5)
                             array.set(kl_strength, j, new_strength)
 
                             // Seed a reference swing for this level if it has not been captured yet
@@ -957,7 +958,7 @@ if barstate.isconfirmed
                 float range_bottom = price - bucket_size
                 float total_vol = buy_vol + sell_vol
                 float smart_delta = total_vol > 0 ? (math.abs(delta) / total_vol) * 100 : 0
-                float strength = smart_delta * ratio
+                float strength = smart_delta * (ratio + 1.5)
                 string tier = get_tier(ratio)
                 float swing_ref = side == "buy" ? swingLowRef : swingHighRef
 
@@ -1866,7 +1867,7 @@ if showTables and not na(tbl_key)
             color delta_color = smart_delta >= 0 ? col_buy : col_sell
             string delta_label = str.tostring(math.abs(smart_delta), "#.0") + "% " + delta_marker
 
-            color score_color = strength >= 250 ? color.lime : strength >= 150 ? color.new(color.lime, 20) : strength >= 80 ? color.white : color.gray
+            color score_color = strength >= 600 ? color.lime : strength >= 350 ? color.new(color.lime, 20) : strength >= 180 ? color.white : color.gray
             table.cell(tbl_key, 0, data_row, range_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
             table.cell(tbl_key, 1, data_row, str.tostring(poc, format.mintick), text_color=side_color, text_size=size.small, bgcolor=row_bg)
             table.cell(tbl_key, 2, data_row, side_label, text_color=side_color, text_size=size.small, bgcolor=row_bg)
