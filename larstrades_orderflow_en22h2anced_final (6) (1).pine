@@ -1766,10 +1766,12 @@ float perf_net_ticks = 0.0
 float perf_avg_win = na
 float perf_avg_loss = na
 float perf_expectancy = na
-int perf_header_text_size = mobileCompact ? size.small : size.normal
-int perf_row_text_size = mobileCompact ? size.tiny : size.small
+int perf_header_text_size = na
+int perf_row_text_size = na
 
 if barstate.islast
+    perf_header_text_size := mobileCompact ? size.small : size.normal
+    perf_row_text_size := mobileCompact ? size.tiny : size.small
     perf_total_trades := array.size(trades_closed)
     perf_wins := 0
     perf_losses := 0
