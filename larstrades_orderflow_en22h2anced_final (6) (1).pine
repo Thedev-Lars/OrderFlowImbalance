@@ -1766,8 +1766,8 @@ float perf_net_ticks = 0.0
 float perf_avg_win = na
 float perf_avg_loss = na
 float perf_expectancy = na
-int perf_header_text_size = na
-int perf_row_text_size = na
+int perf_header_text_size = mobileCompact ? size.small : size.normal
+int perf_row_text_size = mobileCompact ? size.tiny : size.small
 
 if barstate.islast
     perf_total_trades := array.size(trades_closed)
@@ -1801,8 +1801,6 @@ if showTables
         color perf_header_bg = color.new(color.gray, 60)
         color perf_row_bg = color.new(color.gray, 80)
         color perf_value_bg = color.new(color.gray, 85)
-        perf_header_text_size := mobileCompact ? size.small : size.normal
-        perf_row_text_size := mobileCompact ? size.tiny : size.small
 
         string perf_total_str = str.tostring(perf_total_trades)
         string perf_wins_str = str.tostring(perf_wins)
