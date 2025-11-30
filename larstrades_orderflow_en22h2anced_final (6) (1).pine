@@ -1799,8 +1799,8 @@ if showTables
         color perf_header_bg = color.new(color.gray, 60)
         color perf_row_bg = color.new(color.gray, 80)
         color perf_value_bg = color.new(color.gray, 85)
-        text_size perf_header_size = mobileCompact ? size.small : size.normal
-        text_size perf_row_size = mobileCompact ? size.tiny : size.small
+        int perf_header_size = mobileCompact ? size.small : size.normal
+        int perf_row_size = mobileCompact ? size.tiny : size.small
 
         string perf_total_str = str.tostring(perf_total_trades)
         string perf_wins_str = str.tostring(perf_wins)
