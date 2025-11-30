@@ -1939,7 +1939,7 @@ else
                     table.cell(tbl_tradesUnified, 4, unified_row, "FloatTks", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
                     table.cell(tbl_tradesUnified, 5, unified_row, "RangeHi", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
                     table.cell(tbl_tradesUnified, 6, unified_row, "RangeLo", text_color=color.white, text_size=size.small, bgcolor=trade_section_bg)
-            unified_row += 1
+                unified_row += 1
 
                 string o_side = open_idx < array.size(kl_side) ? array.get(kl_side, open_idx) : ""
                 float o_entry = open_idx < array.size(trade_entry) ? array.get(trade_entry, open_idx) : (open_idx < array.size(kl_entry_price) ? array.get(kl_entry_price, open_idx) : na)
@@ -1959,14 +1959,14 @@ else
                 if mobileCompact
                     table.cell(tbl_tradesUnified, 0, unified_row, o_side == "buy" ? "B" : "S", text_color=open_col, text_size=size.small, bgcolor=open_bg)
                     table.cell(tbl_tradesUnified, 1, unified_row, str.tostring(o_entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=open_bg)
-                    table.cell(tbl_tradesUnified, 2, unified_row, str.tostring(o_stop, format.mintick), text_color=color.white, text_size=size.small, bgcolor=open_bg)
+                    table.cell(tbl_tradesUnified, 2, unified_row, str.tostring(o_stop, format.mintick), text_color=color.white,text_size=size.small, bgcolor=open_bg)
                     table.cell(tbl_tradesUnified, 3, unified_row, str.tostring(o_target, format.mintick), text_color=color.white, text_size=size.small, bgcolor=open_bg)
                     table.cell(tbl_tradesUnified, 4, unified_row, float_str, text_color=color.white, text_size=size.small, bgcolor=open_bg)
                     table.merge_cells(tbl_tradesUnified, 4, unified_row, 6, unified_row)
                 else
                     table.cell(tbl_tradesUnified, 0, unified_row, o_side == "buy" ? "B" : "S", text_color=open_col, text_size=size.small, bgcolor=open_bg)
                     table.cell(tbl_tradesUnified, 1, unified_row, str.tostring(o_entry, format.mintick), text_color=color.white, text_size=size.small, bgcolor=open_bg)
-                    table.cell(tbl_tradesUnified, 2, unified_row, str.tostring(o_stop, format.mintick), text_color=color.white, text_size=size.small, bgcolor=open_bg)
+                    table.cell(tbl_tradesUnified, 2, unified_row, str.tostring(o_stop, format.mintick), text_color=color.white,text_size=size.small, bgcolor=open_bg)
                     table.cell(tbl_tradesUnified, 3, unified_row, str.tostring(o_target, format.mintick), text_color=color.white, text_size=size.small, bgcolor=open_bg)
                     table.cell(tbl_tradesUnified, 4, unified_row, float_str, text_color=color.white, text_size=size.small, bgcolor=open_bg)
                     table.cell(tbl_tradesUnified, 5, unified_row, str.tostring(o_range_hi, format.mintick), text_color=color.white, text_size=size.small, bgcolor=open_bg)
