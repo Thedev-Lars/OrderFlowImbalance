@@ -182,6 +182,8 @@ var float[] kl_strength = array.new_float()
 var float[] kl_peak_ratio = array.new_float()
 var float[] kl_avg_ratio = array.new_float()
 var float[] kl_poc_volume = array.new_float()
+var float[] kl_net_delta = array.new_float()
+var float[] kl_total_volume = array.new_float()
 var string[] kl_tier = array.new_string()
 var int[] kl_origin_bar = array.new_int()
 var string[] kl_state = array.new_string()
@@ -351,6 +353,8 @@ if current_day != last_session_day
     array.clear(kl_peak_ratio)
     array.clear(kl_avg_ratio)
     array.clear(kl_poc_volume)
+    array.clear(kl_net_delta)
+    array.clear(kl_total_volume)
     array.clear(kl_tier)
     array.clear(kl_origin_bar)
     array.clear(kl_state)
@@ -927,9 +931,16 @@ if barstate.isconfirmed
                             float new_avg = (current_avg + ratio) / 2
                             array.set(kl_avg_ratio, j, new_avg)
                             
-                            float total_delta = math.abs(delta)
+                            float existing_delta = array.get(kl_net_delta, j)
+                            float existing_vol = array.get(kl_total_volume, j)
+                            float updated_delta = existing_delta + delta
+                            float updated_vol = existing_vol + (buy_vol + sell_vol)
+                            array.set(kl_net_delta, j, updated_delta)
+                            array.set(kl_total_volume, j, updated_vol)
+
                             float peak_ratio = array.get(kl_peak_ratio, j)
-                            float new_strength = (total_delta * peak_ratio) / 100
+                            float smart_delta = updated_vol > 0 ? (math.abs(updated_delta) / updated_vol) * 100 : 0
+                            float new_strength = smart_delta * peak_ratio
                             array.set(kl_strength, j, new_strength)
 
                             // Seed a reference swing for this level if it has not been captured yet
@@ -944,7 +955,9 @@ if barstate.isconfirmed
             if not merged
                 float range_top = price + bucket_size
                 float range_bottom = price - bucket_size
-                float strength = (math.abs(delta) * ratio) / 100
+                float total_vol = buy_vol + sell_vol
+                float smart_delta = total_vol > 0 ? (math.abs(delta) / total_vol) * 100 : 0
+                float strength = smart_delta * ratio
                 string tier = get_tier(ratio)
                 float swing_ref = side == "buy" ? swingLowRef : swingHighRef
 
@@ -956,7 +969,9 @@ if barstate.isconfirmed
                 array.push(kl_strength, strength)
                 array.push(kl_peak_ratio, ratio)
                 array.push(kl_avg_ratio, ratio)
-                array.push(kl_poc_volume, buy_vol + sell_vol)
+                array.push(kl_poc_volume, total_vol)
+                array.push(kl_net_delta, delta)
+                array.push(kl_total_volume, total_vol)
                 array.push(kl_tier, tier)
                 array.push(kl_origin_bar, bar_index)
                 array.push(kl_state, STATE_ACTIVE)
@@ -1056,11 +1071,19 @@ if barstate.isconfirmed
                     tmp_f := array.get(kl_avg_ratio, j)
                     array.set(kl_avg_ratio, j, array.get(kl_avg_ratio, j + 1))
                     array.set(kl_avg_ratio, j + 1, tmp_f)
-                    
+
                     tmp_f := array.get(kl_poc_volume, j)
                     array.set(kl_poc_volume, j, array.get(kl_poc_volume, j + 1))
                     array.set(kl_poc_volume, j + 1, tmp_f)
-                    
+
+                    tmp_f := array.get(kl_net_delta, j)
+                    array.set(kl_net_delta, j, array.get(kl_net_delta, j + 1))
+                    array.set(kl_net_delta, j + 1, tmp_f)
+
+                    tmp_f := array.get(kl_total_volume, j)
+                    array.set(kl_total_volume, j, array.get(kl_total_volume, j + 1))
+                    array.set(kl_total_volume, j + 1, tmp_f)
+
                     tmp_s := array.get(kl_tier, j)
                     array.set(kl_tier, j, array.get(kl_tier, j + 1))
                     array.set(kl_tier, j + 1, tmp_s)
@@ -1194,6 +1217,8 @@ if barstate.isconfirmed
             array.pop(kl_peak_ratio)
             array.pop(kl_avg_ratio)
             array.pop(kl_poc_volume)
+            array.pop(kl_net_delta)
+            array.pop(kl_total_volume)
             array.pop(kl_tier)
             array.pop(kl_origin_bar)
             array.pop(kl_state)
@@ -1752,7 +1777,7 @@ if showTables and not na(tbl_key)
     table.cell(tbl_key, 0, 1, "Range", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
     table.cell(tbl_key, 1, 1, "POC", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
     table.cell(tbl_key, 2, 1, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
-    table.cell(tbl_key, 3, 1, "Peak", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_key, 3, 1, "Δ%", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
     table.cell(tbl_key, 4, 1, "Score", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
 
     int level_count = array.size(kl_poc)
@@ -1785,7 +1810,7 @@ if showTables and not na(tbl_key)
         int data_row = row + 2
         if row < display_count and row < array.size(kl_price_order)
             int level_idx = array.get(kl_price_order, row)
-            bool level_idx_ok = level_idx >= 0 and level_idx < array.size(kl_range_top) and level_idx < array.size(kl_range_bottom) and level_idx < array.size(kl_poc) and level_idx < array.size(kl_side) and level_idx < array.size(kl_peak_ratio) and level_idx < array.size(kl_tier) and level_idx < array.size(kl_strength) and level_idx < array.size(kl_state) and level_idx < array.size(kl_test_count) and level_idx < array.size(kl_rr_ratio)
+            bool level_idx_ok = level_idx >= 0 and level_idx < array.size(kl_range_top) and level_idx < array.size(kl_range_bottom) and level_idx < array.size(kl_poc) and level_idx < array.size(kl_side) and level_idx < array.size(kl_peak_ratio) and level_idx < array.size(kl_net_delta) and level_idx < array.size(kl_total_volume) and level_idx < array.size(kl_tier) and level_idx < array.size(kl_strength) and level_idx < array.size(kl_state) and level_idx < array.size(kl_test_count) and level_idx < array.size(kl_rr_ratio)
             if not level_idx_ok
                 continue
             float range_top = array.get(kl_range_top, level_idx)
@@ -1793,6 +1818,8 @@ if showTables and not na(tbl_key)
             float poc = array.get(kl_poc, level_idx)
             string side = array.get(kl_side, level_idx)
             float peak_ratio = array.get(kl_peak_ratio, level_idx)
+            float net_delta = array.get(kl_net_delta, level_idx)
+            float total_vol = array.get(kl_total_volume, level_idx)
             string tier = array.get(kl_tier, level_idx)
             float strength = array.get(kl_strength, level_idx)
             string state = array.get(kl_state, level_idx)
@@ -1834,11 +1861,17 @@ if showTables and not na(tbl_key)
 
             string range_str = str.tostring(range_bottom, format.mintick) + "-" + str.tostring(range_top, format.mintick)
             string side_label = side == "buy" ? "B" : "S"
+            float smart_delta = total_vol > 0 ? (net_delta / total_vol) * 100 : 0
+            string delta_marker = smart_delta >= 0 ? "▲" : "▼"
+            color delta_color = smart_delta >= 0 ? col_buy : col_sell
+            string delta_label = str.tostring(math.abs(smart_delta), "#.0") + "% " + delta_marker
+
+            color score_color = strength >= 250 ? color.lime : strength >= 150 ? color.new(color.lime, 20) : strength >= 80 ? color.white : color.gray
             table.cell(tbl_key, 0, data_row, range_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
             table.cell(tbl_key, 1, data_row, str.tostring(poc, format.mintick), text_color=side_color, text_size=size.small, bgcolor=row_bg)
             table.cell(tbl_key, 2, data_row, side_label, text_color=side_color, text_size=size.small, bgcolor=row_bg)
-            table.cell(tbl_key, 3, data_row, str.tostring(peak_ratio, "#.#") + ":1", text_color=side_color, text_size=size.small, bgcolor=row_bg)
-            table.cell(tbl_key, 4, data_row, str.tostring(math.round(strength)), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 3, data_row, delta_label, text_color=delta_color, text_size=size.small, bgcolor=row_bg)
+            table.cell(tbl_key, 4, data_row, str.tostring(math.round(strength)), text_color=score_color, text_size=size.small, bgcolor=row_bg)
         else
             color empty_bg = color.new(color.gray, 95)
             for col = 0 to 4
