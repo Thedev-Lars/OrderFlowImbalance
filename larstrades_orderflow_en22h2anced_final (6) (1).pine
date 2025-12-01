@@ -1481,7 +1481,7 @@ if array.size(kl_state) > 0
                     s_state := INVALIDATED
 
                 switch s_state
-                    case SETUP_READY
+                    SETUP_READY =>
                         bool in_zone_ready = not na(s_zone_top) and not na(s_zone_bottom) and (high >= s_zone_bottom - setup_wick_buffer) and (low <= s_zone_top + setup_wick_buffer)
                         if in_zone_ready
                             array.set(setup_state, si, WAITING_FOR_RETEST)
@@ -1493,7 +1493,7 @@ if array.size(kl_state) > 0
                                 array.set(setup_scalpConfirm, si, 0)
                             if si < array.size(setup_runnerConfirm)
                                 array.set(setup_runnerConfirm, si, 0)
-                    case WAITING_FOR_RETEST
+                    WAITING_FOR_RETEST =>
                         bool poc_touch = not na(s_poc) and (high >= s_poc - setup_wick_buffer) and (low <= s_poc + setup_wick_buffer)
                         poc_confirm := poc_touch ? poc_confirm + 1 : 0
                         if si < array.size(setup_pocConfirm)
@@ -1506,7 +1506,7 @@ if array.size(kl_state) > 0
                                 array.set(setup_scalpConfirm, si, 0)
                             if si < array.size(setup_runnerConfirm)
                                 array.set(setup_runnerConfirm, si, 0)
-                    case OPEN_TRADE
+                    OPEN_TRADE =>
                         bool stop_touch = not na(s_stop) and ((s_dir == "long" and low <= s_stop + setup_wick_buffer) or (s_dir == "short" and high >= s_stop - setup_wick_buffer))
                         stop_confirm := stop_touch ? stop_confirm + 1 : 0
                         if si < array.size(setup_stopConfirm)
@@ -1545,9 +1545,9 @@ if array.size(kl_state) > 0
                                 array.set(setup_scalpConfirm, si, 0)
                             if si < array.size(setup_runnerConfirm)
                                 array.set(setup_runnerConfirm, si, 0)
-                    case CLOSED_TRADE
+                    CLOSED_TRADE =>
                         // Trade has closed; retain for history/cleanup
-                    case INVALIDATED
+                    INVALIDATED =>
                         // Setup invalidated; pending cleanup
 
             // Legacy trade engine transitions (disabled)
