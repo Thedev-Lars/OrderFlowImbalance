@@ -193,6 +193,25 @@ var int[] kl_test_count = array.new_int()
 var box[] kl_box = array.new_box()
 var int[] kl_last_test_bar = array.new_int()
 
+// Setup Engine states
+var string SETUP_READY = "SETUP_READY"
+var string WAITING_FOR_RETEST = "WAITING_FOR_RETEST"
+var string OPEN_TRADE = "OPEN_TRADE"
+var string CLOSED_TRADE = "CLOSED_TRADE"
+var string INVALIDATED = "INVALIDATED"
+
+// Setup Engine tracking arrays
+var float[] setup_entryPrice = array.new_float()
+var float[] setup_stopPrice = array.new_float()
+var float[] setup_scalpTarget = array.new_float()
+var float[] setup_runnerTarget = array.new_float()
+var string[] setup_direction = array.new_string()
+var float[] setup_zoneTop = array.new_float()
+var float[] setup_zoneBottom = array.new_float()
+var float[] setup_pocPrice = array.new_float()
+var float[] setup_strengthScore = array.new_float()
+var string[] setup_state = array.new_string()
+
 // Trade Engine v2 scaffolding
 var int TE_STATE_ACTIVE = 0
 var int TE_STATE_POSSIBLE = 1
@@ -1015,6 +1034,30 @@ if barstate.isconfirmed
                 array.push(kl_poc_tagged, false)
                 array.push(kl_closed_logged, false)
 
+                // Setup Generator: seed a new setup for this key level
+                string setup_dir = side == "buy" ? "long" : "short"
+                float setup_entry = price
+                float setup_zone_top = range_top
+                float setup_zone_bottom = range_bottom
+                float setup_poc = price
+                float setup_strength = strength
+
+                // Placeholders until stop/targets are computed
+                float setup_stop = na
+                float setup_scalp = na
+                float setup_runner = na
+
+                array.push(setup_entryPrice, setup_entry)
+                array.push(setup_stopPrice, setup_stop)
+                array.push(setup_scalpTarget, setup_scalp)
+                array.push(setup_runnerTarget, setup_runner)
+                array.push(setup_direction, setup_dir)
+                array.push(setup_zoneTop, setup_zone_top)
+                array.push(setup_zoneBottom, setup_zone_bottom)
+                array.push(setup_pocPrice, setup_poc)
+                array.push(setup_strengthScore, setup_strength)
+                array.push(setup_state, SETUP_READY)
+
                 color box_color = side == "buy" ? color.new(col_buy, 70) : color.new(col_sell, 70)
                 box new_box = box.new(left=bar_index, top=range_top, right=bar_index + 1, bottom=range_bottom, border_color=box_color, bgcolor=box_color, border_width=1)
                 array.push(kl_box, new_box)
@@ -1352,6 +1395,21 @@ if array.size(kl_state) > 0
                     float exit_price = current_state == STATE_PROFIT ? target_price : stop_price
                     float ticks_val = side == "buy" ? (exit_price - entry_price) / syminfo.mintick : (entry_price - exit_price) / syminfo.mintick
                     finalize_close(i, current_state == STATE_PROFIT ? "Profit" : "Loss", ticks_val)
+
+            // Setup Engine state machine
+            for si = 0 to array.size(setup_state) - 1
+                string s_state = array.get(setup_state, si)
+                switch s_state
+                    case SETUP_READY
+                        // Awaiting validation and retest eligibility
+                    case WAITING_FOR_RETEST
+                        // Waiting for price to retest the zone/POC
+                    case OPEN_TRADE
+                        // Trade is open; awaiting stop or target resolution
+                    case CLOSED_TRADE
+                        // Trade has closed; retain for history/cleanup
+                    case INVALIDATED
+                        // Setup invalidated; pending cleanup
 
             // ACTIVE ? ENTRY (find valid trade setup)
             else if current_state == STATE_ACTIVE
