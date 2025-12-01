@@ -1480,75 +1480,74 @@ if array.size(kl_state) > 0
                         array.set(setup_runnerConfirm, si, 0)
                     s_state := INVALIDATED
 
-                switch s_state
-                    SETUP_READY =>
-                        bool in_zone_ready = not na(s_zone_top) and not na(s_zone_bottom) and (high >= s_zone_bottom - setup_wick_buffer) and (low <= s_zone_top + setup_wick_buffer)
-                        if in_zone_ready
-                            array.set(setup_state, si, WAITING_FOR_RETEST)
-                            if si < array.size(setup_pocConfirm)
-                                array.set(setup_pocConfirm, si, 0)
-                            if si < array.size(setup_stopConfirm)
-                                array.set(setup_stopConfirm, si, 0)
-                            if si < array.size(setup_scalpConfirm)
-                                array.set(setup_scalpConfirm, si, 0)
-                            if si < array.size(setup_runnerConfirm)
-                                array.set(setup_runnerConfirm, si, 0)
-                    WAITING_FOR_RETEST =>
-                        bool poc_touch = not na(s_poc) and (high >= s_poc - setup_wick_buffer) and (low <= s_poc + setup_wick_buffer)
-                        poc_confirm := poc_touch ? poc_confirm + 1 : 0
+                if s_state == SETUP_READY
+                    bool in_zone_ready = not na(s_zone_top) and not na(s_zone_bottom) and (high >= s_zone_bottom - setup_wick_buffer) and (low <= s_zone_top + setup_wick_buffer)
+                    if in_zone_ready
+                        array.set(setup_state, si, WAITING_FOR_RETEST)
                         if si < array.size(setup_pocConfirm)
-                            array.set(setup_pocConfirm, si, poc_confirm)
-                        if poc_confirm >= zoneConfirmBars
-                            array.set(setup_state, si, OPEN_TRADE)
-                            if si < array.size(setup_stopConfirm)
-                                array.set(setup_stopConfirm, si, 0)
-                            if si < array.size(setup_scalpConfirm)
-                                array.set(setup_scalpConfirm, si, 0)
-                            if si < array.size(setup_runnerConfirm)
-                                array.set(setup_runnerConfirm, si, 0)
-                    OPEN_TRADE =>
-                        bool stop_touch = not na(s_stop) and ((s_dir == "long" and low <= s_stop + setup_wick_buffer) or (s_dir == "short" and high >= s_stop - setup_wick_buffer))
-                        stop_confirm := stop_touch ? stop_confirm + 1 : 0
+                            array.set(setup_pocConfirm, si, 0)
                         if si < array.size(setup_stopConfirm)
-                            array.set(setup_stopConfirm, si, stop_confirm)
-
-                        bool scalp_touch = not na(s_scalp) and ((s_dir == "long" and high >= s_scalp - setup_wick_buffer) or (s_dir == "short" and low <= s_scalp + setup_wick_buffer))
-                        bool runner_touch = not na(s_runner) and ((s_dir == "long" and high >= s_runner - setup_wick_buffer) or (s_dir == "short" and low <= s_runner + setup_wick_buffer))
-
-                        scalp_confirm := scalp_touch ? scalp_confirm + 1 : 0
-                        runner_confirm := runner_touch ? runner_confirm + 1 : 0
-
+                            array.set(setup_stopConfirm, si, 0)
                         if si < array.size(setup_scalpConfirm)
-                            array.set(setup_scalpConfirm, si, scalp_confirm)
+                            array.set(setup_scalpConfirm, si, 0)
                         if si < array.size(setup_runnerConfirm)
-                            array.set(setup_runnerConfirm, si, runner_confirm)
+                            array.set(setup_runnerConfirm, si, 0)
+                else if s_state == WAITING_FOR_RETEST
+                    bool poc_touch = not na(s_poc) and (high >= s_poc - setup_wick_buffer) and (low <= s_poc + setup_wick_buffer)
+                    poc_confirm := poc_touch ? poc_confirm + 1 : 0
+                    if si < array.size(setup_pocConfirm)
+                        array.set(setup_pocConfirm, si, poc_confirm)
+                    if poc_confirm >= zoneConfirmBars
+                        array.set(setup_state, si, OPEN_TRADE)
+                        if si < array.size(setup_stopConfirm)
+                            array.set(setup_stopConfirm, si, 0)
+                        if si < array.size(setup_scalpConfirm)
+                            array.set(setup_scalpConfirm, si, 0)
+                        if si < array.size(setup_runnerConfirm)
+                            array.set(setup_runnerConfirm, si, 0)
+                else if s_state == OPEN_TRADE
+                    bool stop_touch = not na(s_stop) and ((s_dir == "long" and low <= s_stop + setup_wick_buffer) or (s_dir == "short" and high >= s_stop - setup_wick_buffer))
+                    stop_confirm := stop_touch ? stop_confirm + 1 : 0
+                    if si < array.size(setup_stopConfirm)
+                        array.set(setup_stopConfirm, si, stop_confirm)
 
-                        bool stop_hit = stop_confirm >= stopConfirmBars
-                        bool scalp_hit = scalp_confirm >= profitConfirmBars
-                        bool runner_hit = runner_confirm >= profitConfirmBars
+                    bool scalp_touch = not na(s_scalp) and ((s_dir == "long" and high >= s_scalp - setup_wick_buffer) or (s_dir == "short" and low <= s_scalp + setup_wick_buffer))
+                    bool runner_touch = not na(s_runner) and ((s_dir == "long" and high >= s_runner - setup_wick_buffer) or (s_dir == "short" and low <= s_runner + setup_wick_buffer))
 
-                        if stop_hit
-                            array.set(setup_state, si, INVALIDATED)
-                            if si < array.size(setup_pocConfirm)
-                                array.set(setup_pocConfirm, si, 0)
-                            if si < array.size(setup_stopConfirm)
-                                array.set(setup_stopConfirm, si, 0)
-                            if si < array.size(setup_scalpConfirm)
-                                array.set(setup_scalpConfirm, si, 0)
-                            if si < array.size(setup_runnerConfirm)
-                                array.set(setup_runnerConfirm, si, 0)
-                        else if scalp_hit or runner_hit
-                            array.set(setup_state, si, CLOSED_TRADE)
-                            if si < array.size(setup_stopConfirm)
-                                array.set(setup_stopConfirm, si, 0)
-                            if si < array.size(setup_scalpConfirm)
-                                array.set(setup_scalpConfirm, si, 0)
-                            if si < array.size(setup_runnerConfirm)
-                                array.set(setup_runnerConfirm, si, 0)
-                    CLOSED_TRADE =>
-                        // Trade has closed; retain for history/cleanup
-                    INVALIDATED =>
-                        // Setup invalidated; pending cleanup
+                    scalp_confirm := scalp_touch ? scalp_confirm + 1 : 0
+                    runner_confirm := runner_touch ? runner_confirm + 1 : 0
+
+                    if si < array.size(setup_scalpConfirm)
+                        array.set(setup_scalpConfirm, si, scalp_confirm)
+                    if si < array.size(setup_runnerConfirm)
+                        array.set(setup_runnerConfirm, si, runner_confirm)
+
+                    bool stop_hit = stop_confirm >= stopConfirmBars
+                    bool scalp_hit = scalp_confirm >= profitConfirmBars
+                    bool runner_hit = runner_confirm >= profitConfirmBars
+
+                    if stop_hit
+                        array.set(setup_state, si, INVALIDATED)
+                        if si < array.size(setup_pocConfirm)
+                            array.set(setup_pocConfirm, si, 0)
+                        if si < array.size(setup_stopConfirm)
+                            array.set(setup_stopConfirm, si, 0)
+                        if si < array.size(setup_scalpConfirm)
+                            array.set(setup_scalpConfirm, si, 0)
+                        if si < array.size(setup_runnerConfirm)
+                            array.set(setup_runnerConfirm, si, 0)
+                    else if scalp_hit or runner_hit
+                        array.set(setup_state, si, CLOSED_TRADE)
+                        if si < array.size(setup_stopConfirm)
+                            array.set(setup_stopConfirm, si, 0)
+                        if si < array.size(setup_scalpConfirm)
+                            array.set(setup_scalpConfirm, si, 0)
+                        if si < array.size(setup_runnerConfirm)
+                            array.set(setup_runnerConfirm, si, 0)
+                else if s_state == CLOSED_TRADE
+                    // Trade has closed; retain for history/cleanup
+                else if s_state == INVALIDATED
+                    // Setup invalidated; pending cleanup
 
             // Legacy trade engine transitions (disabled)
             if false
