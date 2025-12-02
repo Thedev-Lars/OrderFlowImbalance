@@ -37,6 +37,8 @@ rejectionBuffer = input.float(5.0, "Stop Loss Buffer (Ticks)", minval=1.0, step=
 profitConfirmBars = input.int(2, "Bars to Confirm Profit", minval=1, maxval=5, group="Trade Logic")
 // New setting: number of bars to confirm a stop loss hit (Option C - give trades room to breathe)
 stopConfirmBars   = input.int(2, "Bars to Confirm Stop Loss", minval=1, maxval=5, group="Trade Logic")
+zoneConfirmBars   = input.int(2, "Bars to Confirm Zone Break", minval=1, maxval=10, group="Trade Logic")
+wickToleranceTicks = input.float(2.0, "Zone Wick Tolerance (Ticks)", minval=0.0, step=0.5, group="Trade Logic")
 maxRR_input        = input.float(4.0,  "Maximum Risk:Reward Ratio", minval=0.0, step=0.5, group="Trade Logic")
 maxRR = math.max(maxRR_input, minRR)
 atrLength    = input.int(14,     "ATR Length",                minval=1,                group="Trade Logic")
@@ -191,6 +193,29 @@ var int[] kl_test_count = array.new_int()
 var box[] kl_box = array.new_box()
 var int[] kl_last_test_bar = array.new_int()
 
+// Setup Engine states
+var string SETUP_READY = "SETUP_READY"
+var string WAITING_FOR_RETEST = "WAITING_FOR_RETEST"
+var string OPEN_TRADE = "OPEN_TRADE"
+var string CLOSED_TRADE = "CLOSED_TRADE"
+var string INVALIDATED = "INVALIDATED"
+
+// Setup Engine tracking arrays
+var float[] setup_entryPrice = array.new_float()
+var float[] setup_stopPrice = array.new_float()
+var float[] setup_scalpTarget = array.new_float()
+var float[] setup_runnerTarget = array.new_float()
+var string[] setup_direction = array.new_string()
+var float[] setup_zoneTop = array.new_float()
+var float[] setup_zoneBottom = array.new_float()
+var float[] setup_pocPrice = array.new_float()
+var float[] setup_strengthScore = array.new_float()
+var string[] setup_state = array.new_string()
+var int[] setup_pocConfirm = array.new_int()
+var int[] setup_stopConfirm = array.new_int()
+var int[] setup_scalpConfirm = array.new_int()
+var int[] setup_runnerConfirm = array.new_int()
+
 // Trade Engine v2 scaffolding
 var int TE_STATE_ACTIVE = 0
 var int TE_STATE_POSSIBLE = 1
@@ -216,6 +241,8 @@ var line[] kl_stop_line = array.new_line()
 var line[] kl_target_line = array.new_line()
 var label[] kl_trade_label = array.new_label()
 var int[] kl_reject_count = array.new_int()
+var int[] kl_break_bars = array.new_int()
+var bool[] kl_poc_tagged = array.new_bool()
 var string[] kl_outcome = array.new_string()
 var float[] kl_realized_ticks = array.new_float()
 var bool[] kl_closed_logged = array.new_bool()
@@ -373,6 +400,8 @@ if current_day != last_session_day
     array.clear(kl_outcome)
     array.clear(kl_realized_ticks)
     array.clear(kl_closed_logged)
+    array.clear(kl_break_bars)
+    array.clear(kl_poc_tagged)
     array.clear(trade_entry_bar)
     array.clear(trade_state)
     array.clear(trade_opened)
@@ -385,6 +414,20 @@ if current_day != last_session_day
     array.clear(trades_set)
     array.clear(trades_open)
     array.clear(trades_closed)
+    array.clear(setup_entryPrice)
+    array.clear(setup_stopPrice)
+    array.clear(setup_scalpTarget)
+    array.clear(setup_runnerTarget)
+    array.clear(setup_direction)
+    array.clear(setup_zoneTop)
+    array.clear(setup_zoneBottom)
+    array.clear(setup_pocPrice)
+    array.clear(setup_strengthScore)
+    array.clear(setup_state)
+    array.clear(setup_pocConfirm)
+    array.clear(setup_stopConfirm)
+    array.clear(setup_scalpConfirm)
+    array.clear(setup_runnerConfirm)
     trade_seq := 0
     clear_trade_visuals()
     clear_performance_history()
@@ -1005,7 +1048,58 @@ if barstate.isconfirmed
                 array.push(kl_target_line, na)
                 array.push(kl_trade_label, na)
                 array.push(kl_reject_count, 0)
+                array.push(kl_break_bars, 0)
+                array.push(kl_poc_tagged, false)
                 array.push(kl_closed_logged, false)
+
+                // Setup Generator: seed a new setup for this key level
+                string setup_dir = side == "buy" ? "long" : "short"
+                float setup_entry = price
+                float setup_zone_top = range_top
+                float setup_zone_bottom = range_bottom
+                float setup_poc = price
+                float setup_strength = strength
+
+                // Stop/target sizing using ATR and min/max tick guards
+                float base_stop = setup_dir == "long" ? setup_zone_bottom : setup_zone_top
+                float atr_stop = setup_dir == "long" ? setup_entry - (atr * atrMult) : setup_entry + (atr * atrMult)
+                float raw_stop = setup_dir == "long" ? math.min(base_stop, atr_stop) : math.max(base_stop, atr_stop)
+                float risk_ticks = math.abs(setup_entry - raw_stop) / syminfo.mintick
+                float clamped_ticks = math.min(math.max(risk_ticks, minStopTicks), maxStopTicks)
+                float setup_stop = setup_dir == "long" ? setup_entry - (clamped_ticks * syminfo.mintick) : setup_entry + (clamped_ticks * syminfo.mintick)
+
+                // 1R scalp target based on clamped risk distance
+                float setup_scalp = setup_dir == "long" ? setup_entry + (clamped_ticks * syminfo.mintick) : setup_entry - (clamped_ticks * syminfo.mintick)
+
+                // Runner target: nearest opposing imbalance POC
+                string opp_side = setup_dir == "long" ? "sell" : "buy"
+                float setup_runner = na
+                float nearest_diff = na
+                int kl_count_runner = array.size(kl_poc)
+                if kl_count_runner > 0
+                    for rr = 0 to kl_count_runner - 1
+                        string rr_side = array.get(kl_side, rr)
+                        float rr_poc = array.get(kl_poc, rr)
+                        if rr_side == opp_side and not na(rr_poc)
+                            float diff = math.abs(rr_poc - setup_entry)
+                            if na(nearest_diff) or diff < nearest_diff
+                                nearest_diff := diff
+                                setup_runner := rr_poc
+
+                array.push(setup_entryPrice, setup_entry)
+                array.push(setup_stopPrice, setup_stop)
+                array.push(setup_scalpTarget, setup_scalp)
+                array.push(setup_runnerTarget, setup_runner)
+                array.push(setup_direction, setup_dir)
+                array.push(setup_zoneTop, setup_zone_top)
+                array.push(setup_zoneBottom, setup_zone_bottom)
+                array.push(setup_pocPrice, setup_poc)
+                array.push(setup_strengthScore, setup_strength)
+                array.push(setup_state, SETUP_READY)
+                array.push(setup_pocConfirm, 0)
+                array.push(setup_stopConfirm, 0)
+                array.push(setup_scalpConfirm, 0)
+                array.push(setup_runnerConfirm, 0)
 
                 color box_color = side == "buy" ? color.new(col_buy, 70) : color.new(col_sell, 70)
                 box new_box = box.new(left=bar_index, top=range_top, right=bar_index + 1, bottom=range_bottom, border_color=box_color, bgcolor=box_color, border_width=1)
@@ -1168,6 +1262,14 @@ if barstate.isconfirmed
                     array.set(kl_reject_count, j, array.get(kl_reject_count, j + 1))
                     array.set(kl_reject_count, j + 1, tmp_i)
 
+                    tmp_i := array.get(kl_break_bars, j)
+                    array.set(kl_break_bars, j, array.get(kl_break_bars, j + 1))
+                    array.set(kl_break_bars, j + 1, tmp_i)
+
+                    bool tmp_tag = array.get(kl_poc_tagged, j)
+                    array.set(kl_poc_tagged, j, array.get(kl_poc_tagged, j + 1))
+                    array.set(kl_poc_tagged, j + 1, tmp_tag)
+
                     tmp_i := array.get(trade_state, j)
                     array.set(trade_state, j, array.get(trade_state, j + 1))
                     array.set(trade_state, j + 1, tmp_i)
@@ -1252,6 +1354,8 @@ if barstate.isconfirmed
             array.pop(kl_target_line)
             array.pop(kl_trade_label)
             array.pop(kl_reject_count)
+            array.pop(kl_break_bars)
+            array.pop(kl_poc_tagged)
             array.pop(trade_state)
             array.pop(trade_opened)
             array.pop(trade_entry)
@@ -1278,8 +1382,41 @@ if array.size(kl_state) > 0
             int test_count = array.get(kl_test_count, i)
             int last_test = array.get(kl_last_test_bar, i)
             int reject_count = array.get(kl_reject_count, i)
+            int break_bars = array.get(kl_break_bars, i)
+            bool poc_tagged = array.get(kl_poc_tagged, i)
+            float wick_tolerance = wickToleranceTicks * syminfo.mintick
 
             float reject_buffer = rejectionBuffer * syminfo.mintick
+
+            float entry_price_lvl = array.get(kl_entry_price, i)
+            bool entry_defined = not na(entry_price_lvl)
+            bool entry_touched = entry_defined and (high >= entry_price_lvl and low <= entry_price_lvl)
+
+            bool poc_touched = not na(poc) and (high >= poc - wick_tolerance) and (low <= poc + wick_tolerance)
+            if poc_touched and not poc_tagged
+                poc_tagged := true
+
+            bool in_buffered_zone = (high >= range_bottom - wick_tolerance) and (low <= range_top + wick_tolerance)
+            bool outside_buffered_zone = (close > range_top + wick_tolerance) or (close < range_bottom - wick_tolerance)
+
+            if in_buffered_zone
+                break_bars := 0
+            else if poc_tagged and outside_buffered_zone
+                break_bars += 1
+
+            array.set(kl_break_bars, i, break_bars)
+            array.set(kl_poc_tagged, i, poc_tagged)
+
+            bool eligible_reject_state = current_state == STATE_ACTIVE or current_state == STATE_ENTRY or current_state == STATE_TESTING
+            bool should_reject_zone = eligible_reject_state and poc_tagged and entry_touched and break_bars >= zoneConfirmBars
+
+            if should_reject_zone
+                array.set(kl_state, i, STATE_REJECTED)
+                if i < array.size(trade_state)
+                    array.set(trade_state, i, TE_STATE_REJECTED)
+                array.set(kl_outcome, i, "Rejected")
+
+            current_state := array.get(kl_state, i)
 
             if i < array.size(trade_state) and array.get(trade_state, i) == TE_STATE_POSSIBLE
                 int created_bar = i < array.size(trade_created_bar) ? array.get(trade_created_bar, i) : na
@@ -1302,84 +1439,200 @@ if array.size(kl_state) > 0
                     float ticks_val = side == "buy" ? (exit_price - entry_price) / syminfo.mintick : (entry_price - exit_price) / syminfo.mintick
                     finalize_close(i, current_state == STATE_PROFIT ? "Profit" : "Loss", ticks_val)
 
-            // ACTIVE ? ENTRY (find valid trade setup)
-            else if current_state == STATE_ACTIVE
-                bool has_setup = i < array.size(kl_entry_price) and not na(array.get(kl_entry_price, i))
+            // Setup Engine state machine
+            float setup_wick_buffer = wickToleranceTicks * syminfo.mintick
+            for si = 0 to array.size(setup_state) - 1
+                string s_state = array.get(setup_state, si)
+                string s_dir = si < array.size(setup_direction) ? array.get(setup_direction, si) : ""
+                float s_entry = si < array.size(setup_entryPrice) ? array.get(setup_entryPrice, si) : na
+                float s_zone_top = si < array.size(setup_zoneTop) ? array.get(setup_zoneTop, si) : na
+                float s_zone_bottom = si < array.size(setup_zoneBottom) ? array.get(setup_zoneBottom, si) : na
+                float s_poc = si < array.size(setup_pocPrice) ? array.get(setup_pocPrice, si) : na
+                float s_stop = si < array.size(setup_stopPrice) ? array.get(setup_stopPrice, si) : na
+                float s_scalp = si < array.size(setup_scalpTarget) ? array.get(setup_scalpTarget, si) : na
+                float s_runner = si < array.size(setup_runnerTarget) ? array.get(setup_runnerTarget, si) : na
+                float s_strength = si < array.size(setup_strengthScore) ? array.get(setup_strengthScore, si) : na
 
-                if not has_setup
-                    array.set(trade_state, i, TE_STATE_ACTIVE)
-                    // Evaluate trade filters
-                    // Compute the imbalance ratio and total volume for this level
-                    float ratio_i = array.get(kl_peak_ratio, i)
-                    float totalVol = array.get(kl_poc_volume, i)
-                    // Estimate opposing volume: for buy levels ratio = buy/sell, so sellVol ˜ totalVol/(1+ratio).
-                    // For sell levels ratio = sell/buy, so buyVol ˜ totalVol/(1+ratio).
-                    float opposingVol = totalVol / (1 + ratio_i)
-                    float opposingPct = totalVol > 0 ? opposingVol / totalVol : 1.0
-                    bool opposition_ok = opposingPct <= maxOpposingPct or ratio_i >= imbalanceRatio
-                    bool trendAlign = not trendFilterEnabled or ((side == "buy" and trendDir == "up") or (side == "sell" and trendDir == "down"))
-                    bool extremeLevel = ratio_i >= extremeRatio
-                    int tier_rank = get_tier_rank(array.get(kl_tier, i))
-                    float strength = array.get(kl_strength, i)
-                    float entryPrice = array.get(kl_entry_price, i)
-                    float distance = math.abs(close - entryPrice)
-                    bool qualityOK = tier_rank >= 2 and strength >= minStrength and distance <= maxDistanceTicks * syminfo.mintick
-                    // A level passes the filter if it aligns with the prevailing trend
-                    // and either meets the opposing-volume threshold or already clears
-                    // the baseline imbalance ratio. Extreme tiers still override both.
-                    bool passFilter = (not trendFilterEnabled or (trendAlign and (opposition_ok or extremeLevel)) or extremeLevel) and qualityOK
+                int poc_confirm = si < array.size(setup_pocConfirm) ? array.get(setup_pocConfirm, si) : 0
+                int stop_confirm = si < array.size(setup_stopConfirm) ? array.get(setup_stopConfirm, si) : 0
+                int scalp_confirm = si < array.size(setup_scalpConfirm) ? array.get(setup_scalpConfirm, si) : 0
+                int runner_confirm = si < array.size(setup_runnerConfirm) ? array.get(setup_runnerConfirm, si) : 0
 
-                    if passFilter
-                        // Use the unified swing+ATR stop and RR-banded targeting helper
+                // Stronger opposing imbalance invalidates this setup
+                string opp_side = s_dir == "long" ? "sell" : "buy"
+                bool stronger_opp = false
+                int last_idx = array.size(kl_strength) - 1
+                if last_idx >= 0
+                    string last_side = array.get(kl_side, last_idx)
+                    int last_origin = array.get(kl_origin_bar, last_idx)
+                    float last_strength = array.get(kl_strength, last_idx)
+                    if last_side == opp_side and last_origin == bar_index and (na(s_strength) or last_strength > s_strength)
+                        stronger_opp := true
+
+                if stronger_opp
+                    array.set(setup_state, si, INVALIDATED)
+                    if si < array.size(setup_pocConfirm)
+                        array.set(setup_pocConfirm, si, 0)
+                    if si < array.size(setup_stopConfirm)
+                        array.set(setup_stopConfirm, si, 0)
+                    if si < array.size(setup_scalpConfirm)
+                        array.set(setup_scalpConfirm, si, 0)
+                    if si < array.size(setup_runnerConfirm)
+                        array.set(setup_runnerConfirm, si, 0)
+                    s_state := INVALIDATED
+
+                // Setup Engine per-setup state handling
+                if s_state == SETUP_READY
+                    bool in_zone_ready = not na(s_zone_top) and not na(s_zone_bottom) and (high >= s_zone_bottom - setup_wick_buffer) and (low <= s_zone_top + setup_wick_buffer)
+                    if in_zone_ready
+                        array.set(setup_state, si, WAITING_FOR_RETEST)
+                        if si < array.size(setup_pocConfirm)
+                            array.set(setup_pocConfirm, si, 0)
+                        if si < array.size(setup_stopConfirm)
+                            array.set(setup_stopConfirm, si, 0)
+                        if si < array.size(setup_scalpConfirm)
+                            array.set(setup_scalpConfirm, si, 0)
+                        if si < array.size(setup_runnerConfirm)
+                            array.set(setup_runnerConfirm, si, 0)
+
+                else if s_state == WAITING_FOR_RETEST
+                    bool poc_touch = not na(s_poc) and (high >= s_poc - setup_wick_buffer) and (low <= s_poc + setup_wick_buffer)
+                    poc_confirm := poc_touch ? poc_confirm + 1 : 0
+                    if si < array.size(setup_pocConfirm)
+                        array.set(setup_pocConfirm, si, poc_confirm)
+                    if poc_confirm >= zoneConfirmBars
+                        array.set(setup_state, si, OPEN_TRADE)
+                        if si < array.size(setup_stopConfirm)
+                            array.set(setup_stopConfirm, si, 0)
+                        if si < array.size(setup_scalpConfirm)
+                            array.set(setup_scalpConfirm, si, 0)
+                        if si < array.size(setup_runnerConfirm)
+                            array.set(setup_runnerConfirm, si, 0)
+
+                else if s_state == OPEN_TRADE
+                    bool stop_touch = not na(s_stop) and ((s_dir == "long" and low <= s_stop + setup_wick_buffer) or (s_dir == "short" and high >= s_stop - setup_wick_buffer))
+                    stop_confirm := stop_touch ? stop_confirm + 1 : 0
+                    if si < array.size(setup_stopConfirm)
+                        array.set(setup_stopConfirm, si, stop_confirm)
+
+                    bool scalp_touch = not na(s_scalp) and ((s_dir == "long" and high >= s_scalp - setup_wick_buffer) or (s_dir == "short" and low <= s_scalp + setup_wick_buffer))
+                    bool runner_touch = not na(s_runner) and ((s_dir == "long" and high >= s_runner - setup_wick_buffer) or (s_dir == "short" and low <= s_runner + setup_wick_buffer))
+
+                    scalp_confirm := scalp_touch ? scalp_confirm + 1 : 0
+                    runner_confirm := runner_touch ? runner_confirm + 1 : 0
+
+                    if si < array.size(setup_scalpConfirm)
+                        array.set(setup_scalpConfirm, si, scalp_confirm)
+                    if si < array.size(setup_runnerConfirm)
+                        array.set(setup_runnerConfirm, si, runner_confirm)
+
+                    bool stop_hit = stop_confirm >= stopConfirmBars
+                    bool scalp_hit = scalp_confirm >= profitConfirmBars
+                    bool runner_hit = runner_confirm >= profitConfirmBars
+
+                    if stop_hit
+                        array.set(setup_state, si, INVALIDATED)
+                        if si < array.size(setup_pocConfirm)
+                            array.set(setup_pocConfirm, si, 0)
+                        if si < array.size(setup_stopConfirm)
+                            array.set(setup_stopConfirm, si, 0)
+                        if si < array.size(setup_scalpConfirm)
+                            array.set(setup_scalpConfirm, si, 0)
+                        if si < array.size(setup_runnerConfirm)
+                            array.set(setup_runnerConfirm, si, 0)
+                    else if scalp_hit or runner_hit
+                        array.set(setup_state, si, CLOSED_TRADE)
+                        if si < array.size(setup_stopConfirm)
+                            array.set(setup_stopConfirm, si, 0)
+                        if si < array.size(setup_scalpConfirm)
+                            array.set(setup_scalpConfirm, si, 0)
+                        if si < array.size(setup_runnerConfirm)
+                            array.set(setup_runnerConfirm, si, 0)
+
+                else if s_state == CLOSED_TRADE
+                    // Trade has closed; retain for history/cleanup
+
+                else if s_state == INVALIDATED
+                    // Setup invalidated; pending cleanup
+            // Legacy trade engine transitions (disabled)
+            if false
+                if current_state == STATE_ACTIVE
+                    bool has_setup = i < array.size(kl_entry_price) and not na(array.get(kl_entry_price, i))
+
+                    if not has_setup
+                        array.set(trade_state, i, TE_STATE_ACTIVE)
+                        // Evaluate trade filters
+                        // Compute the imbalance ratio and total volume for this level
+                        float ratio_i = array.get(kl_peak_ratio, i)
+                        float totalVol = array.get(kl_poc_volume, i)
+                        // Estimate opposing volume: for buy levels ratio = buy/sell, so sellVol ˜ totalVol/(1+ratio).
+                        // For sell levels ratio = sell/buy, so buyVol ˜ totalVol/(1+ratio).
+                        float opposingVol = totalVol / (1 + ratio_i)
+                        float opposingPct = totalVol > 0 ? opposingVol / totalVol : 1.0
+                        bool opposition_ok = opposingPct <= maxOpposingPct or ratio_i >= imbalanceRatio
+                        bool trendAlign = not trendFilterEnabled or ((side == "buy" and trendDir == "up") or (side == "sell" and trendDir == "down"))
+                        bool extremeLevel = ratio_i >= extremeRatio
+                        int tier_rank = get_tier_rank(array.get(kl_tier, i))
+                        float strength = array.get(kl_strength, i)
+                        float entryPrice = array.get(kl_entry_price, i)
+                        float distance = math.abs(close - entryPrice)
+                        bool qualityOK = tier_rank >= 2 and strength >= minStrength and distance <= maxDistanceTicks * syminfo.mintick
+                        // A level passes the filter if it aligns with the prevailing trend
+                        // and either meets the opposing-volume threshold or already clears
+                        // the baseline imbalance ratio. Extreme tiers still override both.
+                        bool passFilter = (not trendFilterEnabled or (trendAlign and (opposition_ok or extremeLevel)) or extremeLevel) and qualityOK
+
+                        if passFilter
+                            // Use the unified swing+ATR stop and RR-banded targeting helper
+                            int seq_after_create = create_trade_for_level(i, trade_seq)
+                            bool created = seq_after_create != trade_seq
+                            trade_seq := seq_after_create
+                            if not created
+                                array.set(kl_last_test_bar, i, bar_index)
+                        else
+                            // Filters not satisfied – remain ACTIVE and record touch
+                            array.set(kl_last_test_bar, i, bar_index)
+
+                // ENTRY ? TESTING (trade is live)
+                else if current_state == STATE_ENTRY
+                    trade_seq := register_set_trade(i, trade_seq)
+                    float entry_price = array.get(kl_entry_price, i)
+                    bool has_prices = not na(entry_price) and i < array.size(kl_stop_price) and not na(array.get(kl_stop_price, i)) and i < array.size(kl_target_price) and not na(array.get(kl_target_price, i))
+                    bool triggered = has_prices and (side == "buy" ? (low <= entry_price) : (high >= entry_price))
+
+                    if triggered and not has_open_trade()
+                        open_trade_for_level(i)
+                        process_open_trade_bar(i, side)
+
+                // TESTING ? PROFIT or LOSS
+                else if current_state == STATE_TESTING
+                    process_open_trade_bar(i, side)
+
+                // PROFIT ? HELD
+                else if current_state == STATE_PROFIT
+                    if test_count >= 2
+                        array.set(kl_state, i, STATE_HELD)
+
+                    // Check for retouch
+                    bool touching_again = (low <= range_top) and (high >= range_bottom)
+                    if touching_again and (bar_index > last_test + 3)
+                        // Retouch entries share the same stop/target sizing as first touches
                         int seq_after_create = create_trade_for_level(i, trade_seq)
                         bool created = seq_after_create != trade_seq
                         trade_seq := seq_after_create
                         if not created
                             array.set(kl_last_test_bar, i, bar_index)
-                    else
-                        // Filters not satisfied – remain ACTIVE and record touch
-                        array.set(kl_last_test_bar, i, bar_index)
-            
-            // ENTRY ? TESTING (trade is live)
-            else if current_state == STATE_ENTRY
-                trade_seq := register_set_trade(i, trade_seq)
-                float entry_price = array.get(kl_entry_price, i)
-                bool has_prices = not na(entry_price) and i < array.size(kl_stop_price) and not na(array.get(kl_stop_price, i)) and i < array.size(kl_target_price) and not na(array.get(kl_target_price, i))
-                bool triggered = has_prices and (side == "buy" ? (low <= entry_price) : (high >= entry_price))
 
-                if triggered and not has_open_trade()
-                    open_trade_for_level(i)
-                    process_open_trade_bar(i, side)
-
-            // TESTING ? PROFIT or LOSS
-            else if current_state == STATE_TESTING
-                process_open_trade_bar(i, side)
-
-            // PROFIT ? HELD
-            else if current_state == STATE_PROFIT
-                if test_count >= 2
-                    array.set(kl_state, i, STATE_HELD)
-
-                // Check for retouch
-                bool touching_again = (low <= range_top) and (high >= range_bottom)
-                if touching_again and (bar_index > last_test + 3)
-                    // Retouch entries share the same stop/target sizing as first touches
-                    int seq_after_create = create_trade_for_level(i, trade_seq)
-                    bool created = seq_after_create != trade_seq
-                    trade_seq := seq_after_create
-                    if not created
-                        array.set(kl_last_test_bar, i, bar_index)
-
-            // HELD
-            else if current_state == STATE_HELD
-                bool touching_again = (low <= range_top) and (high >= range_bottom)
-                if touching_again and (bar_index > last_test + 3)
-                    // Re-engage held levels with the unified trade creation rules
-                    int seq_after_create = create_trade_for_level(i, trade_seq)
-                    bool created = seq_after_create != trade_seq
-                    trade_seq := seq_after_create
-                    if not created
-                        array.set(kl_last_test_bar, i, bar_index)
+                // HELD
+                else if current_state == STATE_HELD
+                    bool touching_again = (low <= range_top) and (high >= range_bottom)
+                    if touching_again and (bar_index > last_test + 3)
+                        // Re-engage held levels with the unified trade creation rules
+                        int seq_after_create = create_trade_for_level(i, trade_seq)
+                        bool created = seq_after_create != trade_seq
+                        trade_seq := seq_after_create
+                        if not created
+                            array.set(kl_last_test_bar, i, bar_index)
 
 // ---------------------------------------------------------------------------
 // Dev debug overlay for the most recent trade candidate
