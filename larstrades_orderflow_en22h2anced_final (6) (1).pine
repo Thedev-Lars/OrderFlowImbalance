@@ -446,7 +446,7 @@ type TimelineEvent
     string dir
     float entry
     float stop
-    float take
+    float target
     float pnlTicks
     float rr
 
@@ -725,10 +725,10 @@ has_open_trade() =>
                 break
     found_open
 
-log_timeline(string event, string dir, float entry, float stop, float take, float pnlTicks, float rr) =>
-    TimelineEvent ev = TimelineEvent.new(bar_index, event, dir, entry, stop, take, pnlTicks, rr)
+log_timeline(string event, string dir, float entry, float stop, float target, float pnlTicks, float rr) =>
+    TimelineEvent ev = TimelineEvent.new(bar_index, event, dir, entry, stop, target, pnlTicks, rr)
     array.push(timeline, ev)
-    ev
+    true
 
 swap_trade_indices(int a, int b) =>
     Trade[] arr_ref = trades_set
