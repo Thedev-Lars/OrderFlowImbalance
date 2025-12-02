@@ -36,6 +36,8 @@ resetPerformance = input.bool(false, "Reset Performance", group="Performance")
 
 // Trade Settings
 minRR = input.float(3.0, "Minimum Risk:Reward Ratio", minval=2.0, step=0.5, group="Trade Logic")
+tp1RR = input.float(1.5, "TP1 Risk:Reward", minval=0.5, step=0.5, group="Trade Logic")
+tp2RR = input.float(3.0, "TP2 Risk:Reward", minval=1.0, step=0.5, group="Trade Logic")
 rejectionBuffer = input.float(5.0, "Stop Loss Buffer (Ticks)", minval=1.0, step=0.5, group="Trade Logic")
 profitConfirmBars = input.int(2, "Bars to Confirm Profit", minval=1, maxval=5, group="Trade Logic")
 // New setting: number of bars to confirm a stop loss hit (Option C - give trades room to breathe)
@@ -198,6 +200,7 @@ var float[] kl_poc_volume = array.new_float()
 var float[] kl_net_delta = array.new_float()
 var float[] kl_total_volume = array.new_float()
 var string[] kl_tier = array.new_string()
+var float[] kl_tp1_price = array.new_float()
 var int[] kl_origin_bar = array.new_int()
 var string[] kl_state = array.new_string()
 var int[] kl_test_count = array.new_int()
@@ -219,15 +222,19 @@ var float[] trade_entry = array.new_float()
 var float[] trade_stop = array.new_float()
 var float[] trade_target = array.new_float()
 var float[] trade_ticks = array.new_float()
+var float[] trade_target1 = array.new_float()
+var bool[] trade_tp1_hit = array.new_bool()
 
 // Trade visualization arrays
 var float[] kl_entry_price = array.new_float()
 var float[] kl_stop_price = array.new_float()
 var float[] kl_target_price = array.new_float()
 var float[] kl_rr_ratio = array.new_float()
+var float[] kl_rr_tp1 = array.new_float()
 var line[] kl_entry_line = array.new_line()
 var line[] kl_stop_line = array.new_line()
 var line[] kl_target_line = array.new_line()
+var line[] kl_tp1_line = array.new_line()
 var label[] kl_trade_label = array.new_label()
 var int[] kl_reject_count = array.new_int()
 var string[] kl_outcome = array.new_string()
@@ -236,6 +243,7 @@ var bool[] kl_closed_logged = array.new_bool()
 var int[] trade_entry_bar = array.new_int()
 var int[] trade_created_bar = array.new_int()
 var int[] kl_relevance = array.new_int()
+var bool[] kl_tp1_hit = array.new_bool()
 
 // Dev debug overlay objects
 var line debugEntryLine = na
@@ -281,6 +289,9 @@ remove_zone(int idx) =>
         line ln_target = f_safe_get(kl_target_line, idx)
         if not na(ln_target)
             line.delete(ln_target)
+        line ln_tp1 = f_safe_get(kl_tp1_line, idx)
+        if not na(ln_tp1)
+            line.delete(ln_tp1)
         label lb = f_safe_get(kl_trade_label, idx)
         if not na(lb)
             label.delete(lb)
@@ -297,6 +308,7 @@ remove_zone(int idx) =>
         array.remove(kl_net_delta, idx)
         array.remove(kl_total_volume, idx)
         array.remove(kl_tier, idx)
+        array.remove(kl_tp1_price, idx)
         array.remove(kl_origin_bar, idx)
         array.remove(kl_state, idx)
         array.remove(kl_test_count, idx)
@@ -307,21 +319,26 @@ remove_zone(int idx) =>
         array.remove(kl_stop_price, idx)
         array.remove(kl_target_price, idx)
         array.remove(kl_rr_ratio, idx)
+        array.remove(kl_rr_tp1, idx)
         array.remove(kl_entry_line, idx)
         array.remove(kl_stop_line, idx)
         array.remove(kl_target_line, idx)
+        array.remove(kl_tp1_line, idx)
         array.remove(kl_trade_label, idx)
         array.remove(kl_reject_count, idx)
         array.remove(kl_outcome, idx)
         array.remove(kl_realized_ticks, idx)
         array.remove(kl_closed_logged, idx)
         array.remove(trade_entry_bar, idx)
+        array.remove(kl_tp1_hit, idx)
         array.remove(trade_state, idx)
         array.remove(trade_opened, idx)
         array.remove(trade_entry, idx)
         array.remove(trade_stop, idx)
         array.remove(trade_target, idx)
+        array.remove(trade_target1, idx)
         array.remove(trade_ticks, idx)
+        array.remove(trade_tp1_hit, idx)
         array.remove(trade_created_bar, idx)
         array.remove(trade_closed_bar, idx)
 
@@ -412,7 +429,9 @@ type Trade
     int direction
     float entry
     float stop
-    float take
+    float take1
+    float take2
+    bool tp1Hit
     string status   // "set", "open", "closed"
     float pnlTicks
 
@@ -495,6 +514,8 @@ if current_day != last_session_day
                 line.delete(array.get(kl_stop_line, i))
             if not na(array.get(kl_target_line, i))
                 line.delete(array.get(kl_target_line, i))
+            if not na(array.get(kl_tp1_line, i))
+                line.delete(array.get(kl_tp1_line, i))
             if not na(array.get(kl_trade_label, i))
                 label.delete(array.get(kl_trade_label, i))
     array.clear(kl_range_top)
@@ -509,6 +530,7 @@ if current_day != last_session_day
     array.clear(kl_net_delta)
     array.clear(kl_total_volume)
     array.clear(kl_tier)
+    array.clear(kl_tp1_price)
     array.clear(kl_origin_bar)
     array.clear(kl_state)
     array.clear(kl_test_count)
@@ -519,14 +541,17 @@ if current_day != last_session_day
     array.clear(kl_stop_price)
     array.clear(kl_target_price)
     array.clear(kl_rr_ratio)
+    array.clear(kl_rr_tp1)
     array.clear(kl_entry_line)
     array.clear(kl_stop_line)
     array.clear(kl_target_line)
+    array.clear(kl_tp1_line)
     array.clear(kl_trade_label)
     array.clear(kl_reject_count)
     array.clear(kl_outcome)
     array.clear(kl_realized_ticks)
     array.clear(kl_closed_logged)
+    array.clear(kl_tp1_hit)
     array.clear(kl_relevance)
     array.clear(trade_entry_bar)
     array.clear(trade_state)
@@ -534,7 +559,9 @@ if current_day != last_session_day
     array.clear(trade_entry)
     array.clear(trade_stop)
     array.clear(trade_target)
+    array.clear(trade_target1)
     array.clear(trade_ticks)
+    array.clear(trade_tp1_hit)
     array.clear(trade_created_bar)
     array.clear(trade_closed_bar)
     array.clear(trades_set)
@@ -747,15 +774,15 @@ remove_trades_for_index(int idx) =>
         array.remove(trades_open, remove_i)
 
 ensure_trade_visual(Trade t, string state_label) =>
-    bool has_prices = not na(t.entry) and not na(t.stop) and not na(t.take)
+    bool has_prices = not na(t.entry) and not na(t.stop) and not na(t.take2)
     if has_prices
         int vis_idx = find_trade_visual_index(t.id)
         if vis_idx == -1
-            line ln_new = line.new(bar_index, t.entry, bar_index + 1, t.entry, extend=extend.right, color=neutralLine, width=1, style=line.style_dotted)
+            line ln_new = line.new(bar_index, t.entry, bar_index + 1, t.entry, extend=extend.right, color=neutralLine, width=1, style=line.style_solid)
             float risk_top = math.max(t.entry, t.stop)
             float risk_bottom = math.min(t.entry, t.stop)
-            float reward_top = math.max(t.entry, t.take)
-            float reward_bottom = math.min(t.entry, t.take)
+            float reward_top = math.max(t.entry, t.take2)
+            float reward_bottom = math.min(t.entry, t.take2)
             box risk_box_new = box.new(bar_index, risk_top, bar_index + 1, risk_bottom, bgcolor=color.new(riskColor, 90), border_color=color.new(riskColor, 90), extend=extend.right)
             box reward_box_new = box.new(bar_index, reward_top, bar_index + 1, reward_bottom, bgcolor=color.new(rewardColor, 90), border_color=color.new(rewardColor, 90), extend=extend.right)
             array.push(trade_visual_ids, t.id)
@@ -769,7 +796,7 @@ ensure_trade_visual(Trade t, string state_label) =>
         box reward_box = array.get(trade_visual_reward_boxes, vis_idx)
 
         if na(ln)
-            ln := line.new(bar_index, t.entry, bar_index + 1, t.entry, extend=extend.right, color=neutralLine, width=1, style=line.style_dotted)
+            ln := line.new(bar_index, t.entry, bar_index + 1, t.entry, extend=extend.right, color=neutralLine, width=1, style=line.style_solid)
             array.set(trade_visual_entry_lines, vis_idx, ln)
         if na(risk_box)
             float risk_top = math.max(t.entry, t.stop)
@@ -777,8 +804,8 @@ ensure_trade_visual(Trade t, string state_label) =>
             risk_box := box.new(bar_index, risk_top, bar_index + 1, risk_bottom, bgcolor=color.new(riskColor, 90), border_color=color.new(riskColor, 90), extend=extend.right)
             array.set(trade_visual_risk_boxes, vis_idx, risk_box)
         if na(reward_box)
-            float reward_top = math.max(t.entry, t.take)
-            float reward_bottom = math.min(t.entry, t.take)
+            float reward_top = math.max(t.entry, t.take2)
+            float reward_bottom = math.min(t.entry, t.take2)
             reward_box := box.new(bar_index, reward_top, bar_index + 1, reward_bottom, bgcolor=color.new(rewardColor, 90), border_color=color.new(rewardColor, 90), extend=extend.right)
             array.set(trade_visual_reward_boxes, vis_idx, reward_box)
 
@@ -788,8 +815,8 @@ ensure_trade_visual(Trade t, string state_label) =>
 
         float risk_top_now = math.max(t.entry, t.stop)
         float risk_bottom_now = math.min(t.entry, t.stop)
-        float reward_top_now = math.max(t.entry, t.take)
-        float reward_bottom_now = math.min(t.entry, t.take)
+        float reward_top_now = math.max(t.entry, t.take2)
+        float reward_bottom_now = math.min(t.entry, t.take2)
 
         box.set_extend(risk_box, extend.right)
         box.set_top(risk_box, risk_top_now)
@@ -799,7 +826,7 @@ ensure_trade_visual(Trade t, string state_label) =>
         box.set_bottom(reward_box, reward_bottom_now)
 
         color line_col = neutralLine
-        var line_style_val = line.style_dotted
+        var line_style_val = line.style_solid
         int line_w = 1
         color risk_bg = color.new(riskColor, 90)
         color reward_bg = color.new(rewardColor, 90)
@@ -838,11 +865,12 @@ register_set_trade(int kl_idx, int seq) =>
     if kl_idx >= 0 and kl_idx < array.size(kl_entry_price)
         float entry = array.get(kl_entry_price, kl_idx)
         float stop = array.get(kl_stop_price, kl_idx)
-        float take = array.get(kl_target_price, kl_idx)
+        float take1 = kl_idx < array.size(kl_tp1_price) ? array.get(kl_tp1_price, kl_idx) : na
+        float take2 = array.get(kl_target_price, kl_idx)
         string side = array.get(kl_side, kl_idx)
         bool valid_side = side == "buy" or side == "sell"
-        bool has_prices = not na(entry) and not na(stop) and not na(take)
-        bool price_between = side == "buy" ? (close >= stop and close <= take) : (close <= stop and close >= take)
+        bool has_prices = not na(entry) and not na(stop) and not na(take1) and not na(take2)
+        bool price_between = side == "buy" ? (close >= stop and close <= take2) : (close <= stop and close >= take2)
 
         if valid_side and has_prices and price_between
             int dir = side == "buy" ? 1 : -1
@@ -853,7 +881,7 @@ register_set_trade(int kl_idx, int seq) =>
                 if existing_set >= 0 and existing_set < array.size(trades_set)
                     t := array.get(trades_set, existing_set)
                 else
-                    t := Trade.new(0, kl_idx, dir, entry, stop, take, "set", na)
+                    t := Trade.new(0, kl_idx, dir, entry, stop, take1, take2, false, "set", na)
                 if existing_set == -1
                     updated_seq += 1
                     t.id := updated_seq
@@ -861,7 +889,9 @@ register_set_trade(int kl_idx, int seq) =>
                 t.direction := dir
                 t.entry := entry
                 t.stop := stop
-                t.take := take
+                t.take1 := take1
+                t.take2 := take2
+                t.tp1Hit := kl_idx < array.size(kl_tp1_hit) ? array.get(kl_tp1_hit, kl_idx) : false
                 t.status := "set"
                 t.pnlTicks := na
                 if existing_set == -1
@@ -882,13 +912,17 @@ register_set_trade(int kl_idx, int seq) =>
                 if kl_idx < array.size(trade_stop)
                     array.set(trade_stop, kl_idx, stop)
                 if kl_idx < array.size(trade_target)
-                    array.set(trade_target, kl_idx, take)
+                    array.set(trade_target, kl_idx, take2)
+                if kl_idx < array.size(trade_target1)
+                    array.set(trade_target1, kl_idx, take1)
                 if kl_idx < array.size(trade_ticks)
                     array.set(trade_ticks, kl_idx, na)
                 if kl_idx < array.size(trade_entry_bar)
                     array.set(trade_entry_bar, kl_idx, na)
                 if kl_idx < array.size(trade_closed_bar)
                     array.set(trade_closed_bar, kl_idx, na)
+                if kl_idx < array.size(trade_tp1_hit)
+                    array.set(trade_tp1_hit, kl_idx, t.tp1Hit)
     updated_seq
 
 open_trade_for_level(int kl_idx) =>
@@ -900,7 +934,7 @@ open_trade_for_level(int kl_idx) =>
             array.remove(trades_set, idx_set)
             t.status := "open"
             array.push(trades_open, t)
-            log_timeline("Trade OPEN", t.direction == 1 ? "Buy" : "Sell", t.entry, t.stop, t.take, na, na)
+            log_timeline("Trade OPEN", t.direction == 1 ? "Buy" : "Sell", t.entry, t.stop, t.take2, na, na)
             if kl_idx < array.size(trade_state)
                 array.set(trade_state, kl_idx, TE_STATE_OPEN)
             if kl_idx < array.size(trade_opened)
@@ -932,9 +966,9 @@ close_open_trade(int kl_idx, float exit_price, string outcome) =>
         t.status := "closed"
         t.pnlTicks := (exit_price - t.entry) / syminfo.mintick * t.direction
         array.push(trades_closed, t)
-        float risk_ticks = (t.take - t.entry) / syminfo.mintick
+        float risk_ticks = (t.take2 - t.entry) / syminfo.mintick
         float rr_val = risk_ticks != 0 ? math.abs(t.pnlTicks) / math.abs(risk_ticks) : na
-        log_timeline("Trade CLOSED", t.direction == 1 ? "Buy" : "Sell", t.entry, t.stop, t.take, t.pnlTicks, rr_val)
+        log_timeline("Trade CLOSED", t.direction == 1 ? "Buy" : "Sell", t.entry, t.stop, t.take2, t.pnlTicks, rr_val)
         if kl_idx < array.size(trade_ticks)
             array.set(trade_ticks, kl_idx, t.pnlTicks)
         finalize_close(kl_idx, outcome, t.pnlTicks)
@@ -944,17 +978,34 @@ process_open_trade_bar(int kl_idx, string side) =>
     if open_idx != -1
         Trade t_open = array.get(trades_open, open_idx)
         float stop = t_open.stop
-        float target = t_open.take
+        float tp1 = t_open.take1
+        float tp2 = t_open.take2
+        bool tp1_flag = t_open.tp1Hit
 
         bool sl_hit = side == "buy" ? (not na(stop) and low <= stop) : (not na(stop) and high >= stop)
-        bool tp_hit = side == "buy" ? (not na(target) and high >= target) : (not na(target) and low <= target)
+        bool tp2_hit = side == "buy" ? (not na(tp2) and high >= tp2) : (not na(tp2) and low <= tp2)
+        bool tp1_hit_now = side == "buy" ? (not na(tp1) and high >= tp1) : (not na(tp1) and low <= tp1)
 
         if sl_hit
-            log_timeline("SL hit", side == "buy" ? "Buy" : "Sell", t_open.entry, t_open.stop, t_open.take, na, na)
+            log_timeline("SL hit", side == "buy" ? "Buy" : "Sell", t_open.entry, t_open.stop, tp2, na, na)
             close_open_trade(kl_idx, stop, "Loss")
-        else if tp_hit
-            log_timeline("TP hit", side == "buy" ? "Buy" : "Sell", t_open.entry, t_open.stop, t_open.take, na, na)
-            close_open_trade(kl_idx, target, "Profit")
+        else if tp2_hit
+            log_timeline("TP2 hit", side == "buy" ? "Buy" : "Sell", t_open.entry, t_open.stop, tp2, na, na)
+            close_open_trade(kl_idx, tp2, "Profit")
+        else if tp1_hit_now and not tp1_flag
+            t_open.tp1Hit := true
+            float new_stop = t_open.entry
+            t_open.stop := new_stop
+            if kl_idx < array.size(kl_stop_price)
+                array.set(kl_stop_price, kl_idx, new_stop)
+            if kl_idx < array.size(trade_stop)
+                array.set(trade_stop, kl_idx, new_stop)
+            if kl_idx < array.size(trade_tp1_hit)
+                array.set(trade_tp1_hit, kl_idx, true)
+            if kl_idx < array.size(kl_tp1_hit)
+                array.set(kl_tp1_hit, kl_idx, true)
+            array.set(trades_open, open_idx, t_open)
+            log_timeline("TP1 hit", side == "buy" ? "Buy" : "Sell", t_open.entry, t_open.stop, tp1, na, na)
 
 get_tier(float peak_ratio) =>
     if peak_ratio >= extremeRatio
@@ -1028,32 +1079,53 @@ create_trade_for_level(int idx, int seq) =>
                 else
                     float level_target = find_next_target(idx, side)
 
-                    float target_to_use = na
-                    float rr_to_use = na
+                    float dir = side == "buy" ? 1.0 : -1.0
+                    float tp1_rr_val = math.max(tp1RR, 0.5)
+                    float tp2_rr_val = math.max(math.max(tp2RR, tp1_rr_val), minRR)
+
+                    float target_tp1 = na
+                    float target_tp2 = na
+                    float rr1 = na
+                    float rr2 = na
 
                     if not na(level_target)
                         float reward_level = math.abs(level_target - poc)
                         float rr_level = risk > 0 ? reward_level / risk : na
-                        if not na(rr_level) and rr_level >= minRR and rr_level <= maxRR
-                            target_to_use := level_target
-                            rr_to_use := rr_level
+                        if not na(rr_level) and rr_level >= tp2_rr_val and rr_level <= maxRR
+                            target_tp2 := level_target
+                            rr2 := rr_level
+                        else if not na(rr_level) and rr_level >= tp1_rr_val
+                            target_tp1 := level_target
+                            rr1 := rr_level
 
-                    if na(target_to_use) or na(rr_to_use)
-                        float dir = side == "buy" ? 1.0 : -1.0
-                        target_to_use := poc + dir * (risk * minRR)
-                        rr_to_use := minRR
+                    if na(target_tp1)
+                        target_tp1 := poc + dir * (risk * tp1_rr_val)
+                        rr1 := tp1_rr_val
 
-                    if rr_to_use > maxRR
-                        float dir = side == "buy" ? 1.0 : -1.0
-                        target_to_use := poc + dir * (risk * maxRR)
-                        rr_to_use := maxRR
+                    if na(target_tp2)
+                        target_tp2 := poc + dir * (risk * tp2_rr_val)
+                        rr2 := tp2_rr_val
+
+                    if rr2 > maxRR
+                        rr2 := maxRR
+                        target_tp2 := poc + dir * (risk * rr2)
+
+                    bool tp_order_incorrect = (side == "buy" and target_tp1 >= target_tp2) or (side == "sell" and target_tp1 <= target_tp2)
+                    if tp_order_incorrect
+                        float adjusted_rr1 = math.min(rr1, rr2 * 0.5)
+                        adjusted_rr1 := math.max(0.5, adjusted_rr1)
+                        target_tp1 := poc + dir * (risk * adjusted_rr1)
+                        rr1 := adjusted_rr1
 
                     array.set(kl_entry_price, idx, poc)
                     array.set(kl_stop_price, idx, stop)
-                    array.set(kl_target_price, idx, target_to_use)
-                    array.set(kl_rr_ratio, idx, rr_to_use)
+                    array.set(kl_tp1_price, idx, target_tp1)
+                    array.set(kl_target_price, idx, target_tp2)
+                    array.set(kl_rr_tp1, idx, rr1)
+                    array.set(kl_rr_ratio, idx, rr2)
                     array.set(kl_state, idx, STATE_ENTRY)
                     array.set(kl_last_test_bar, idx, bar_index)
+                    array.set(kl_tp1_hit, idx, false)
 
                     array.set(trade_state, idx, TE_STATE_POSSIBLE)
                     if array.size(trade_created_bar) <= idx
@@ -1063,7 +1135,15 @@ create_trade_for_level(int idx, int seq) =>
                     array.set(trade_opened, idx, false)
                     array.set(trade_entry, idx, poc)
                     array.set(trade_stop, idx, stop)
-                    array.set(trade_target, idx, target_to_use)
+                    if array.size(trade_target1) <= idx
+                        array.push(trade_target1, target_tp1)
+                    else
+                        array.set(trade_target1, idx, target_tp1)
+                    array.set(trade_target, idx, target_tp2)
+                    if array.size(trade_tp1_hit) <= idx
+                        array.push(trade_tp1_hit, false)
+                    else
+                        array.set(trade_tp1_hit, idx, false)
                     array.set(trade_ticks, idx, na)
 
                     seq_out := register_set_trade(idx, seq_out)
@@ -1232,6 +1312,7 @@ if barstate.isconfirmed
                     array.push(kl_net_delta, delta)
                     array.push(kl_total_volume, total_vol)
                     array.push(kl_tier, tier)
+                    array.push(kl_tp1_price, na)
                     array.push(kl_origin_bar, bar_index)
                     array.push(kl_state, STATE_ACTIVE)
                     array.push(kl_test_count, 0)
@@ -1241,15 +1322,18 @@ if barstate.isconfirmed
                     array.push(kl_stop_price, na)
                     array.push(kl_target_price, na)
                     array.push(kl_rr_ratio, na)
+                    array.push(kl_rr_tp1, na)
                     array.push(kl_outcome, "")
                     array.push(kl_realized_ticks, na)
                     // Initialize line/label IDs as na (uninitialized)
                     array.push(kl_entry_line, na)
                     array.push(kl_stop_line, na)
                     array.push(kl_target_line, na)
+                    array.push(kl_tp1_line, na)
                     array.push(kl_trade_label, na)
                     array.push(kl_reject_count, 0)
                     array.push(kl_closed_logged, false)
+                    array.push(kl_tp1_hit, false)
 
                     color box_color = side == "buy" ? color.new(col_buy, 70) : color.new(col_sell, 70)
                     box new_box = box.new(left=bar_index, top=range_top, right=bar_index + 1, bottom=range_bottom, border_color=box_color, bgcolor=box_color, border_width=1)
@@ -1259,7 +1343,9 @@ if barstate.isconfirmed
                     array.push(trade_entry, na)
                     array.push(trade_stop, na)
                     array.push(trade_target, na)
+                    array.push(trade_target1, na)
                     array.push(trade_ticks, na)
+                    array.push(trade_tp1_hit, false)
                     array.push(trade_entry_bar, na)
                     array.push(trade_created_bar, na)
                     array.push(trade_closed_bar, na)
@@ -1391,23 +1477,38 @@ if barstate.isconfirmed
                     tmp_f := array.get(kl_target_price, j)
                     array.set(kl_target_price, j, array.get(kl_target_price, j + 1))
                     array.set(kl_target_price, j + 1, tmp_f)
-                    
+
+                    tmp_f := j < array.size(kl_tp1_price) and j + 1 < array.size(kl_tp1_price) ? array.get(kl_tp1_price, j) : na
+                    if j < array.size(kl_tp1_price) and j + 1 < array.size(kl_tp1_price)
+                        array.set(kl_tp1_price, j, array.get(kl_tp1_price, j + 1))
+                        array.set(kl_tp1_price, j + 1, tmp_f)
+
                     tmp_f := array.get(kl_rr_ratio, j)
                     array.set(kl_rr_ratio, j, array.get(kl_rr_ratio, j + 1))
                     array.set(kl_rr_ratio, j + 1, tmp_f)
-                    
+
+                    tmp_f := j < array.size(kl_rr_tp1) and j + 1 < array.size(kl_rr_tp1) ? array.get(kl_rr_tp1, j) : na
+                    if j < array.size(kl_rr_tp1) and j + 1 < array.size(kl_rr_tp1)
+                        array.set(kl_rr_tp1, j, array.get(kl_rr_tp1, j + 1))
+                        array.set(kl_rr_tp1, j + 1, tmp_f)
+
                     line tmp_line = array.get(kl_entry_line, j)
                     array.set(kl_entry_line, j, array.get(kl_entry_line, j + 1))
                     array.set(kl_entry_line, j + 1, tmp_line)
-                    
+
                     tmp_line := array.get(kl_stop_line, j)
                     array.set(kl_stop_line, j, array.get(kl_stop_line, j + 1))
                     array.set(kl_stop_line, j + 1, tmp_line)
-                    
+
                     tmp_line := array.get(kl_target_line, j)
                     array.set(kl_target_line, j, array.get(kl_target_line, j + 1))
                     array.set(kl_target_line, j + 1, tmp_line)
-                    
+
+                    tmp_line := j < array.size(kl_tp1_line) and j + 1 < array.size(kl_tp1_line) ? array.get(kl_tp1_line, j) : na
+                    if j < array.size(kl_tp1_line) and j + 1 < array.size(kl_tp1_line)
+                        array.set(kl_tp1_line, j, array.get(kl_tp1_line, j + 1))
+                        array.set(kl_tp1_line, j + 1, tmp_line)
+
                     label tmp_label = array.get(kl_trade_label, j)
                     array.set(kl_trade_label, j, array.get(kl_trade_label, j + 1))
                     array.set(kl_trade_label, j + 1, tmp_label)
@@ -1424,6 +1525,11 @@ if barstate.isconfirmed
                     array.set(trade_opened, j, array.get(trade_opened, j + 1))
                     array.set(trade_opened, j + 1, tmp_open)
 
+                    bool tmp_tp1 = j < array.size(trade_tp1_hit) and j + 1 < array.size(trade_tp1_hit) ? array.get(trade_tp1_hit, j) : false
+                    if j < array.size(trade_tp1_hit) and j + 1 < array.size(trade_tp1_hit)
+                        array.set(trade_tp1_hit, j, array.get(trade_tp1_hit, j + 1))
+                        array.set(trade_tp1_hit, j + 1, tmp_tp1)
+
                     tmp_i := array.get(trade_entry_bar, j)
                     array.set(trade_entry_bar, j, array.get(trade_entry_bar, j + 1))
                     array.set(trade_entry_bar, j + 1, tmp_i)
@@ -1436,6 +1542,11 @@ if barstate.isconfirmed
                     array.set(kl_closed_logged, j, array.get(kl_closed_logged, j + 1))
                     array.set(kl_closed_logged, j + 1, tmp_b)
 
+                    tmp_b := j < array.size(kl_tp1_hit) and j + 1 < array.size(kl_tp1_hit) ? array.get(kl_tp1_hit, j) : false
+                    if j < array.size(kl_tp1_hit) and j + 1 < array.size(kl_tp1_hit)
+                        array.set(kl_tp1_hit, j, array.get(kl_tp1_hit, j + 1))
+                        array.set(kl_tp1_hit, j + 1, tmp_b)
+
                     tmp_f := array.get(trade_entry, j)
                     array.set(trade_entry, j, array.get(trade_entry, j + 1))
                     array.set(trade_entry, j + 1, tmp_f)
@@ -1447,6 +1558,11 @@ if barstate.isconfirmed
                     tmp_f := array.get(trade_target, j)
                     array.set(trade_target, j, array.get(trade_target, j + 1))
                     array.set(trade_target, j + 1, tmp_f)
+
+                    tmp_f := j < array.size(trade_target1) and j + 1 < array.size(trade_target1) ? array.get(trade_target1, j) : na
+                    if j < array.size(trade_target1) and j + 1 < array.size(trade_target1)
+                        array.set(trade_target1, j, array.get(trade_target1, j + 1))
+                        array.set(trade_target1, j + 1, tmp_f)
 
                     tmp_f := array.get(trade_ticks, j)
                     array.set(trade_ticks, j, array.get(trade_ticks, j + 1))
@@ -1484,6 +1600,7 @@ if barstate.isconfirmed
             array.pop(kl_net_delta)
             array.pop(kl_total_volume)
             array.pop(kl_tier)
+            array.pop(kl_tp1_price)
             array.pop(kl_origin_bar)
             array.pop(kl_state)
             array.pop(kl_test_count)
@@ -1496,17 +1613,22 @@ if barstate.isconfirmed
             array.pop(kl_stop_price)
             array.pop(kl_target_price)
             array.pop(kl_rr_ratio)
+            array.pop(kl_rr_tp1)
             array.pop(kl_entry_line)
             array.pop(kl_stop_line)
             array.pop(kl_target_line)
+            array.pop(kl_tp1_line)
             array.pop(kl_trade_label)
             array.pop(kl_reject_count)
+            array.pop(kl_tp1_hit)
             array.pop(trade_state)
             array.pop(trade_opened)
             array.pop(trade_entry)
             array.pop(trade_stop)
             array.pop(trade_target)
+            array.pop(trade_target1)
             array.pop(trade_ticks)
+            array.pop(trade_tp1_hit)
             array.pop(trade_entry_bar)
             array.pop(trade_created_bar)
             array.pop(trade_closed_bar)
@@ -1778,17 +1900,23 @@ if array.size(kl_box) > 0
 
                 int tier_boost = tier == TIER_EXTREME ? 10 : tier == TIER_STRONG ? 5 : 0
                 int final_opacity = math.max(10, base_opacity - tier_boost)
-                
+
+                if na(current_box)
+                    current_box := box.new(left = bar_index, top = array.get(kl_range_top, i), right = bar_index + 1, bottom = array.get(kl_range_bottom, i), border_color = color.new(base_color, final_opacity), bgcolor = color.new(base_color, final_opacity))
+                    array.set(kl_box, i, current_box)
+
                 box.set_right(current_box, bar_index + 1)
                 box.set_border_color(current_box, color.new(base_color, final_opacity))
                 box.set_bgcolor(current_box, color.new(base_color, final_opacity))
-            
+
             // Trade line rendering
             if showTradeLines and relevant
                 float entry = array.get(kl_entry_price, i)
                 float stop = array.get(kl_stop_price, i)
+                float tp1 = i < array.size(kl_tp1_price) ? array.get(kl_tp1_price, i) : na
                 float target = array.get(kl_target_price, i)
-                float rr = array.get(kl_rr_ratio, i)
+                float rr1 = i < array.size(kl_rr_tp1) ? array.get(kl_rr_tp1, i) : na
+                float rr2 = array.get(kl_rr_ratio, i)
                 
                 // Draw/update lines for ENTRY or TESTING states
                 if (state == STATE_ENTRY or state == STATE_TESTING) and not na(entry) and not na(stop) and not na(target)
@@ -1803,15 +1931,23 @@ if array.size(kl_box) > 0
                     // Stop line
                     line stop_line = array.get(kl_stop_line, i)
                     if na(stop_line)
-                        stop_line := line.new(bar_index, stop, bar_index + 1, stop, color = col_stop, width = 2, style = line.style_dashed)
+                        stop_line := line.new(bar_index, stop, bar_index + 1, stop, color = col_stop, width = 2, style = line.style_solid)
                         array.set(kl_stop_line, i, stop_line)
                     else
                         line.set_x2(stop_line, bar_index + 1)
 
+                    if not na(tp1)
+                        line tp1_line = i < array.size(kl_tp1_line) ? array.get(kl_tp1_line, i) : na
+                        if na(tp1_line)
+                            tp1_line := line.new(bar_index, tp1, bar_index + 1, tp1, color = color.new(col_target, 10), width = 2, style = line.style_solid)
+                            array.set(kl_tp1_line, i, tp1_line)
+                        else
+                            line.set_x2(tp1_line, bar_index + 1)
+
                     // Target line
                     line target_line = array.get(kl_target_line, i)
                     if na(target_line)
-                        target_line := line.new(bar_index, target, bar_index + 1, target, color = col_target, width = 2, style = line.style_dotted)
+                        target_line := line.new(bar_index, target, bar_index + 1, target, color = col_target, width = 2, style = line.style_solid)
                         array.set(kl_target_line, i, target_line)
                     else
                         line.set_x2(target_line, bar_index + 1)
@@ -1819,7 +1955,7 @@ if array.size(kl_box) > 0
                     // Label with RR
                     label trade_label = array.get(kl_trade_label, i)
                     if na(trade_label)
-                        string label_text = str.tostring(rr, "#.#") + ":1"
+                        string label_text = (not na(rr1) ? str.tostring(rr1, "#.#") + "/" : "") + str.tostring(rr2, "#.#") + ":1"
                         trade_label := label.new(bar_index, entry, label_text, color = color.new(base_color, 80), textcolor = color.white, style = label.style_label_left, size = size.small)
                         array.set(kl_trade_label, i, trade_label)
                     else
@@ -1854,6 +1990,10 @@ if array.size(kl_box) > 0
                     if not na(target_line)
                         line.delete(target_line)
                         array.set(kl_target_line, i, na)
+                    line tp1_line = i < array.size(kl_tp1_line) ? array.get(kl_tp1_line, i) : na
+                    if not na(tp1_line)
+                        line.delete(tp1_line)
+                        array.set(kl_tp1_line, i, na)
                     label trade_label = array.get(kl_trade_label, i)
                     if na(trade_label) and not na(entry)
                         string marker = array.get(kl_outcome, i) == "Profit" ? "?" : "?"
