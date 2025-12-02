@@ -14,6 +14,9 @@ barsToShow = input.int(6, "Bars to Show in History", minval=3, maxval=10, group=
 // Key Level Settings
 maxKeyLevels = input.int(8, "Max Key Ranges to Track", minval=3, maxval=15, group="Key Levels")
 rangeMergeTicks = input.float(5.0, "Range Merge Distance (Ticks)", minval=2.0, step=0.5, group="Key Levels")
+maxRelevantZones = input.int(6, "Max Zones to Display", minval=1, maxval=12, group="Key Levels")
+zoneAtrDistance = input.float(3.0, "Max Distance from Price (ATR)", minval=0.5, maxval=10.0, step=0.5, group="Key Levels")
+zoneMaxAgeBars = input.int(500, "Max Age for Untested Zones (bars)", minval=10, maxval=2000, group="Key Levels")
 
 // Tiering thresholds
 extremeRatio = input.float(8.0, "EXTREME Tier Threshold", minval=6.0, step=0.5, group="Tiering")
@@ -154,17 +157,22 @@ calc_bar_levels(int lookback_offset) =>
 // KEY LEVEL MODEL
 // ============================================================================
 
-// Status states with ENTRY
-var string STATE_ACTIVE = "ACTIVE"
-var string STATE_ENTRY = "ENTRY"        // NEW: Trade setup ready
+// Lifecycle states (zone-centric)
+var string STATE_ACTIVE = "ACTIVE"          // Detected, not yet tested
+var string STATE_TESTED = "TESTED"          // First wick into the zone
+var string STATE_HOLDING = "HOLDING"        // Rejected and closed away
+var string STATE_EXHAUSTED = "EXHAUSTED"    // Held multiple times, weakening
+var string STATE_BROKEN = "BROKEN"          // Price closed through
+var string STATE_FADED = "FADED"            // Aged out without activity
+
+// Legacy trade-tracking states retained for compatibility with the existing
+// trade engine and rendering routines.
+var string STATE_ENTRY = "ENTRY"        // Trade setup ready
 var string STATE_TESTING = "TESTING"    // Trade is live
 var string STATE_PROFIT = "PROFIT"
 var string STATE_HELD = "HELD"
 var string STATE_REJECTED = "REJECTED"
 var string STATE_CLOSED = "CLOSED"
-
-// New state representing a losing trade.  When a trade is entered and the
-// stop loss is confirmed, the level transitions to LOSS instead of REJECTED.
 var string STATE_LOSS = "LOSS"
 
 // Tier labels
@@ -190,6 +198,7 @@ var string[] kl_state = array.new_string()
 var int[] kl_test_count = array.new_int()
 var box[] kl_box = array.new_box()
 var int[] kl_last_test_bar = array.new_int()
+var int[] kl_break_streak = array.new_int()
 
 // Trade Engine v2 scaffolding
 var int TE_STATE_ACTIVE = 0
@@ -221,6 +230,7 @@ var float[] kl_realized_ticks = array.new_float()
 var bool[] kl_closed_logged = array.new_bool()
 var int[] trade_entry_bar = array.new_int()
 var int[] trade_created_bar = array.new_int()
+var int[] kl_relevance = array.new_int()
 
 // Dev debug overlay objects
 var line debugEntryLine = na
@@ -251,6 +261,139 @@ var box ot_rewardBox = na
 
 f_safe_get(arr, int idx) =>
     idx >= 0 and idx < array.size(arr) ? array.get(arr, idx) : na
+
+remove_zone(int idx) =>
+    if idx >= 0 and idx < array.size(kl_range_top)
+        box bx = f_safe_get(kl_box, idx)
+        if not na(bx)
+            box.delete(bx)
+        line ln_entry = f_safe_get(kl_entry_line, idx)
+        if not na(ln_entry)
+            line.delete(ln_entry)
+        line ln_stop = f_safe_get(kl_stop_line, idx)
+        if not na(ln_stop)
+            line.delete(ln_stop)
+        line ln_target = f_safe_get(kl_target_line, idx)
+        if not na(ln_target)
+            line.delete(ln_target)
+        label lb = f_safe_get(kl_trade_label, idx)
+        if not na(lb)
+            label.delete(lb)
+
+        array.remove(kl_range_top, idx)
+        array.remove(kl_range_bottom, idx)
+        array.remove(kl_poc, idx)
+        array.remove(kl_swing_price, idx)
+        array.remove(kl_side, idx)
+        array.remove(kl_strength, idx)
+        array.remove(kl_peak_ratio, idx)
+        array.remove(kl_avg_ratio, idx)
+        array.remove(kl_poc_volume, idx)
+        array.remove(kl_net_delta, idx)
+        array.remove(kl_total_volume, idx)
+        array.remove(kl_tier, idx)
+        array.remove(kl_origin_bar, idx)
+        array.remove(kl_state, idx)
+        array.remove(kl_test_count, idx)
+        array.remove(kl_box, idx)
+        array.remove(kl_last_test_bar, idx)
+        array.remove(kl_break_streak, idx)
+        array.remove(kl_entry_price, idx)
+        array.remove(kl_stop_price, idx)
+        array.remove(kl_target_price, idx)
+        array.remove(kl_rr_ratio, idx)
+        array.remove(kl_entry_line, idx)
+        array.remove(kl_stop_line, idx)
+        array.remove(kl_target_line, idx)
+        array.remove(kl_trade_label, idx)
+        array.remove(kl_reject_count, idx)
+        array.remove(kl_outcome, idx)
+        array.remove(kl_realized_ticks, idx)
+        array.remove(kl_closed_logged, idx)
+        array.remove(trade_entry_bar, idx)
+        array.remove(trade_state, idx)
+        array.remove(trade_opened, idx)
+        array.remove(trade_entry, idx)
+        array.remove(trade_stop, idx)
+        array.remove(trade_target, idx)
+        array.remove(trade_ticks, idx)
+        array.remove(trade_created_bar, idx)
+        array.remove(trade_closed_bar, idx)
+
+state_priority(string st) =>
+    st == STATE_HOLDING ? 7 :
+         st == STATE_HELD ? 6 :
+         st == STATE_PROFIT ? 5 :
+         st == STATE_TESTED ? 4 :
+         st == STATE_ENTRY ? 3 :
+         st == STATE_TESTING ? 3 :
+         st == STATE_ACTIVE ? 2 :
+         st == STATE_EXHAUSTED ? 2 :
+         st == STATE_REJECTED ? 1 :
+         st == STATE_BROKEN or st == STATE_FADED ? -1 :
+         0
+
+is_selected(int[] idxs, int target) =>
+    bool found = false
+    for i = 0 to array.size(idxs) - 1
+        if array.get(idxs, i) == target
+            found := true
+            break
+    found
+
+rebuild_relevance() =>
+    array.clear(kl_relevance)
+
+    // Remove clearly broken or stale zones
+    if array.size(kl_range_top) > 0
+        for i = array.size(kl_range_top) - 1 to 0 by -1
+            float top = array.get(kl_range_top, i)
+            float bottom = array.get(kl_range_bottom, i)
+            string side = array.get(kl_side, i)
+            int origin = array.get(kl_origin_bar, i)
+            int tests = array.get(kl_test_count, i)
+            bool too_old = (bar_index - origin) > zoneMaxAgeBars and tests == 0
+            bool broken = (side == "buy" and close < bottom) or (side == "sell" and close > top)
+            if broken or too_old
+                remove_zone(i)
+
+    float max_distance_px = zoneAtrDistance * atr_value
+    int total = array.size(kl_range_top)
+    if total > 0
+        for i = 0 to total - 1
+            float poc = array.get(kl_poc, i)
+            float dist = math.abs(close - poc)
+            if dist <= max_distance_px
+                array.push(kl_relevance, i)
+
+    // Sort by state priority, strength, distance to price
+    int rel_count = array.size(kl_relevance)
+    if rel_count > 1
+        for i = 0 to rel_count - 2
+            for j = i + 1 to rel_count - 1
+                int idx_i = array.get(kl_relevance, i)
+                int idx_j = array.get(kl_relevance, j)
+                int pri_i = state_priority(array.get(kl_state, idx_i))
+                int pri_j = state_priority(array.get(kl_state, idx_j))
+                float str_i = array.get(kl_strength, idx_i)
+                float str_j = array.get(kl_strength, idx_j)
+                float dist_i = math.abs(close - array.get(kl_poc, idx_i))
+                float dist_j = math.abs(close - array.get(kl_poc, idx_j))
+                bool swap = false
+                if pri_i < pri_j
+                    swap := true
+                else if pri_i == pri_j and str_i < str_j
+                    swap := true
+                else if pri_i == pri_j and str_i == str_j and dist_i > dist_j
+                    swap := true
+                if swap
+                    int tmp = array.get(kl_relevance, i)
+                    array.set(kl_relevance, i, array.get(kl_relevance, j))
+                    array.set(kl_relevance, j, tmp)
+
+    // Limit to requested number of zones
+    while array.size(kl_relevance) > maxRelevantZones
+        array.pop(kl_relevance)
 
 // Trade lifecycle state machine
 type Trade
@@ -361,6 +504,7 @@ if current_day != last_session_day
     array.clear(kl_test_count)
     array.clear(kl_box)
     array.clear(kl_last_test_bar)
+    array.clear(kl_break_streak)
     array.clear(kl_entry_price)
     array.clear(kl_stop_price)
     array.clear(kl_target_price)
@@ -373,6 +517,7 @@ if current_day != last_session_day
     array.clear(kl_outcome)
     array.clear(kl_realized_ticks)
     array.clear(kl_closed_logged)
+    array.clear(kl_relevance)
     array.clear(trade_entry_bar)
     array.clear(trade_state)
     array.clear(trade_opened)
@@ -425,6 +570,66 @@ record_closed_trade(int idx) =>
         array.push(closed_trade_rr, realized_rr)
         array.push(closed_result, array.get(kl_outcome, idx))
         array.set(kl_closed_logged, idx, true)
+
+update_zone_state(int idx, bool consider_relevance) =>
+    if idx < 0 or idx >= array.size(kl_state)
+        false
+    else
+        string state = array.get(kl_state, idx)
+        // Skip lifecycle changes for closed trade outcomes; they are handled elsewhere.
+        bool trade_terminal = state == STATE_PROFIT or state == STATE_LOSS or state == STATE_CLOSED
+        if trade_terminal
+            false
+        else
+            float top = array.get(kl_range_top, idx)
+            float bottom = array.get(kl_range_bottom, idx)
+            string side = array.get(kl_side, idx)
+            int tests = array.get(kl_test_count, idx)
+            int last_test = array.get(kl_last_test_bar, idx)
+            int breaks = idx < array.size(kl_break_streak) ? array.get(kl_break_streak, idx) : 0
+            int origin = array.get(kl_origin_bar, idx)
+
+            bool wick_touch = low <= top and high >= bottom
+            bool rejection_close = side == "buy" ? close > top : close < bottom
+            bool close_through = side == "buy" ? close < bottom : close > top
+
+            // Age-based fading for zones that have not been interacted with recently.
+            bool stale = (bar_index - origin > zoneMaxAgeBars and tests == 0) or (tests > 0 and bar_index - last_test > zoneMaxAgeBars)
+
+            if wick_touch
+                tests += 1
+                last_test := bar_index
+                if state == STATE_ACTIVE
+                    state := STATE_TESTED
+                else if state == STATE_TESTED or state == STATE_HOLDING or state == STATE_EXHAUSTED
+                    if rejection_close
+                        state := STATE_HOLDING
+                        if tests >= 3
+                            state := STATE_EXHAUSTED
+
+            if close_through
+                breaks += 1
+            else
+                breaks := 0
+
+            float vol_sma = ta.sma(volume, 20)
+            bool strong_break = close_through and (breaks >= 2 or (not na(vol_sma) and volume > vol_sma * 1.5))
+
+            if strong_break
+                state := STATE_BROKEN
+            else if stale
+                state := STATE_FADED
+
+            // Only apply state changes to zones that are part of the actionable set unless
+            // they are broken/faded, which must always be honored.
+            bool allow_update = consider_relevance or state == STATE_BROKEN or state == STATE_FADED
+            if allow_update
+                array.set(kl_state, idx, state)
+                array.set(kl_test_count, idx, tests)
+                array.set(kl_last_test_bar, idx, last_test)
+                if idx < array.size(kl_break_streak)
+                    array.set(kl_break_streak, idx, breaks)
+            state == STATE_BROKEN or state == STATE_FADED
 
 finalize_close(int idx, string outcome, float ticks_val) =>
     bool eligible_close = not (idx < 0 or idx >= array.size(trade_state) or array.get(trade_state, idx) != TE_STATE_OPEN)
@@ -863,6 +1068,10 @@ create_trade_for_level(int idx, int seq) =>
 // ============================================================================
 
 if barstate.isconfirmed
+    // Ensure relevance reflects the latest lifecycle pruning before assessing
+    // new candidates for creation.
+    rebuild_relevance()
+
     [prices, buys, sells] = calc_bar_levels(0)
 
     var float[] raw_prices = array.new_float()
@@ -976,67 +1185,92 @@ if barstate.isconfirmed
                 float strength = smart_delta * math.pow(ratio, 0.6) * vol_factor
                 string tier = get_tier(ratio)
                 float swing_ref = side == "buy" ? swingLowRef : swingHighRef
+                float dist_from_price = math.abs(close - price)
+                float max_distance_px = zoneAtrDistance * atr_value
+                bool within_distance = dist_from_price <= max_distance_px
 
-                array.push(kl_range_top, range_top)
-                array.push(kl_range_bottom, range_bottom)
-                array.push(kl_poc, price)
-                array.push(kl_swing_price, swing_ref)
-                array.push(kl_side, side)
-                array.push(kl_strength, strength)
-                array.push(kl_peak_ratio, ratio)
-                array.push(kl_avg_ratio, ratio)
-                array.push(kl_poc_volume, total_vol)
-                array.push(kl_net_delta, delta)
-                array.push(kl_total_volume, total_vol)
-                array.push(kl_tier, tier)
-                array.push(kl_origin_bar, bar_index)
-                array.push(kl_state, STATE_ACTIVE)
-                array.push(kl_test_count, 0)
-                array.push(kl_last_test_bar, 0)
-                array.push(kl_entry_price, na)
-                array.push(kl_stop_price, na)
-                array.push(kl_target_price, na)
-                array.push(kl_rr_ratio, na)
-                array.push(kl_outcome, "")
-                array.push(kl_realized_ticks, na)
-                // Initialize line/label IDs as na (uninitialized)
-                array.push(kl_entry_line, na)
-                array.push(kl_stop_line, na)
-                array.push(kl_target_line, na)
-                array.push(kl_trade_label, na)
-                array.push(kl_reject_count, 0)
-                array.push(kl_closed_logged, false)
+                // Only allow creation if the zone is within the ATR window and either
+                // there is capacity or it outranks the weakest relevant zone.
+                bool has_capacity = array.size(kl_relevance) < maxRelevantZones
+                bool beats_weakest = false
+                int weakest_idx = na
+                if not has_capacity and array.size(kl_relevance) > 0
+                    weakest_idx := array.get(kl_relevance, array.size(kl_relevance) - 1)
+                    if weakest_idx >= 0 and weakest_idx < array.size(kl_state)
+                        int pri_candidate = state_priority(STATE_ACTIVE)
+                        int pri_weak = state_priority(array.get(kl_state, weakest_idx))
+                        float str_weak = array.get(kl_strength, weakest_idx)
+                        float dist_weak = math.abs(close - array.get(kl_poc, weakest_idx))
+                        beats_weakest := pri_candidate > pri_weak or (pri_candidate == pri_weak and (strength > str_weak or (strength == str_weak and dist_from_price < dist_weak)))
 
-                color box_color = side == "buy" ? color.new(col_buy, 70) : color.new(col_sell, 70)
-                box new_box = box.new(left=bar_index, top=range_top, right=bar_index + 1, bottom=range_bottom, border_color=box_color, bgcolor=box_color, border_width=1)
-                array.push(kl_box, new_box)
-                array.push(trade_state, TE_STATE_ACTIVE)
-                array.push(trade_opened, false)
-                array.push(trade_entry, na)
-                array.push(trade_stop, na)
-                array.push(trade_target, na)
-                array.push(trade_ticks, na)
-                array.push(trade_entry_bar, na)
-                array.push(trade_created_bar, na)
-                array.push(trade_closed_bar, na)
+                bool gate_ok = within_distance and (has_capacity or beats_weakest)
 
-                // Immediately build a trade setup for this new key level.
-                // This uses the unified swing+ATR stop and RR-banded target logic.
-                int new_idx = array.size(kl_state) - 1
+                if gate_ok
+                    if not has_capacity and not na(weakest_idx)
+                        remove_zone(weakest_idx)
+                        rebuild_relevance()
 
-                int updated_seq = create_trade_for_level(new_idx, trade_seq)
-                bool created_setup = updated_seq != trade_seq
-                trade_seq := updated_seq
+                    array.push(kl_range_top, range_top)
+                    array.push(kl_range_bottom, range_bottom)
+                    array.push(kl_poc, price)
+                    array.push(kl_swing_price, swing_ref)
+                    array.push(kl_side, side)
+                    array.push(kl_strength, strength)
+                    array.push(kl_peak_ratio, ratio)
+                    array.push(kl_avg_ratio, ratio)
+                    array.push(kl_poc_volume, total_vol)
+                    array.push(kl_net_delta, delta)
+                    array.push(kl_total_volume, total_vol)
+                    array.push(kl_tier, tier)
+                    array.push(kl_origin_bar, bar_index)
+                    array.push(kl_state, STATE_ACTIVE)
+                    array.push(kl_test_count, 0)
+                    array.push(kl_last_test_bar, 0)
+                    array.push(kl_break_streak, 0)
+                    array.push(kl_entry_price, na)
+                    array.push(kl_stop_price, na)
+                    array.push(kl_target_price, na)
+                    array.push(kl_rr_ratio, na)
+                    array.push(kl_outcome, "")
+                    array.push(kl_realized_ticks, na)
+                    // Initialize line/label IDs as na (uninitialized)
+                    array.push(kl_entry_line, na)
+                    array.push(kl_stop_line, na)
+                    array.push(kl_target_line, na)
+                    array.push(kl_trade_label, na)
+                    array.push(kl_reject_count, 0)
+                    array.push(kl_closed_logged, false)
 
-                float kl_entry = new_idx < array.size(kl_entry_price) ? array.get(kl_entry_price, new_idx) : na
-                float kl_stop = new_idx < array.size(kl_stop_price) ? array.get(kl_stop_price, new_idx) : na
-                float kl_take = new_idx < array.size(kl_target_price) ? array.get(kl_target_price, new_idx) : na
-                log_timeline("KL detected", side == "buy" ? "Buy" : "Sell", kl_entry, kl_stop, kl_take, na, na)
+                    color box_color = side == "buy" ? color.new(col_buy, 70) : color.new(col_sell, 70)
+                    box new_box = box.new(left=bar_index, top=range_top, right=bar_index + 1, bottom=range_bottom, border_color=box_color, bgcolor=box_color, border_width=1)
+                    array.push(kl_box, new_box)
+                    array.push(trade_state, TE_STATE_ACTIVE)
+                    array.push(trade_opened, false)
+                    array.push(trade_entry, na)
+                    array.push(trade_stop, na)
+                    array.push(trade_target, na)
+                    array.push(trade_ticks, na)
+                    array.push(trade_entry_bar, na)
+                    array.push(trade_created_bar, na)
+                    array.push(trade_closed_bar, na)
 
-                // If creation failed (no valid swing, zero risk, etc), leave the level in STATE_ACTIVE
-                // with empty prices so that the ACTIVE ? ENTRY logic can try again on a later touch.
-                if not created_setup
-                    array.set(kl_last_test_bar, new_idx, bar_index)
+                    // Immediately build a trade setup for this new key level.
+                    // This uses the unified swing+ATR stop and RR-banded target logic.
+                    int new_idx = array.size(kl_state) - 1
+
+                    int updated_seq = create_trade_for_level(new_idx, trade_seq)
+                    bool created_setup = updated_seq != trade_seq
+                    trade_seq := updated_seq
+
+                    float kl_entry = new_idx < array.size(kl_entry_price) ? array.get(kl_entry_price, new_idx) : na
+                    float kl_stop = new_idx < array.size(kl_stop_price) ? array.get(kl_stop_price, new_idx) : na
+                    float kl_take = new_idx < array.size(kl_target_price) ? array.get(kl_target_price, new_idx) : na
+                    log_timeline("KL detected", side == "buy" ? "Buy" : "Sell", kl_entry, kl_stop, kl_take, na, na)
+
+                    // If creation failed (no valid swing, zero risk, etc), leave the level in STATE_ACTIVE
+                    // with empty prices so that the ACTIVE ? ENTRY logic can try again on a later touch.
+                    if not created_setup
+                        array.set(kl_last_test_bar, new_idx, bar_index)
     
     // Sort by tier then strength
     if array.size(kl_strength) > 1
@@ -1119,6 +1353,10 @@ if barstate.isconfirmed
                     tmp_i := array.get(kl_last_test_bar, j)
                     array.set(kl_last_test_bar, j, array.get(kl_last_test_bar, j + 1))
                     array.set(kl_last_test_bar, j + 1, tmp_i)
+
+                    tmp_i := array.get(kl_break_streak, j)
+                    array.set(kl_break_streak, j, array.get(kl_break_streak, j + 1))
+                    array.set(kl_break_streak, j + 1, tmp_i)
 
                     tmp_s := array.get(kl_outcome, j)
                     array.set(kl_outcome, j, array.get(kl_outcome, j + 1))
@@ -1240,6 +1478,7 @@ if barstate.isconfirmed
             array.pop(kl_state)
             array.pop(kl_test_count)
             array.pop(kl_last_test_bar)
+            array.pop(kl_break_streak)
             array.pop(kl_outcome)
             array.pop(kl_realized_ticks)
             array.pop(kl_box)
@@ -1263,13 +1502,29 @@ if barstate.isconfirmed
             array.pop(trade_closed_bar)
             array.pop(kl_closed_logged)
 
+        // Refresh relevance after structural changes so downstream logic only
+        // evaluates the actionable subset of zones.
+        rebuild_relevance()
+
 // ============================================================================
 // LIFECYCLE UPDATE WITH ENTRY STATUS AND TRADE SETUP
 // ============================================================================
 
 if array.size(kl_state) > 0
+    var int[] removal_queue = array.new_int()
     for i = 0 to array.size(kl_state) - 1
         if i < array.size(kl_state)
+            bool relevant = is_selected(kl_relevance, i)
+            int ts = i < array.size(trade_state) ? array.get(trade_state, i) : na
+            bool trade_live = ts == TE_STATE_OPEN
+            bool force_process = trade_live
+
+            bool broken_now = update_zone_state(i, relevant or force_process)
+
+            if broken_now
+                array.push(removal_queue, i)
+                continue
+
             string current_state = array.get(kl_state, i)
             string side = array.get(kl_side, i)
             float range_top = array.get(kl_range_top, i)
@@ -1279,7 +1534,8 @@ if array.size(kl_state) > 0
             int last_test = array.get(kl_last_test_bar, i)
             int reject_count = array.get(kl_reject_count, i)
 
-            float reject_buffer = rejectionBuffer * syminfo.mintick
+            if not relevant and not force_process
+                continue
 
             if i < array.size(trade_state) and array.get(trade_state, i) == TE_STATE_POSSIBLE
                 int created_bar = i < array.size(trade_created_bar) ? array.get(trade_created_bar, i) : na
@@ -1302,18 +1558,15 @@ if array.size(kl_state) > 0
                     float ticks_val = side == "buy" ? (exit_price - entry_price) / syminfo.mintick : (entry_price - exit_price) / syminfo.mintick
                     finalize_close(i, current_state == STATE_PROFIT ? "Profit" : "Loss", ticks_val)
 
-            // ACTIVE ? ENTRY (find valid trade setup)
-            else if current_state == STATE_ACTIVE
+            // ACTIVE/TESTED/HOLDING/EXHAUSTED ? ENTRY (find valid trade setup)
+            else if current_state == STATE_ACTIVE or current_state == STATE_TESTED or current_state == STATE_HOLDING or current_state == STATE_EXHAUSTED
                 bool has_setup = i < array.size(kl_entry_price) and not na(array.get(kl_entry_price, i))
 
-                if not has_setup
+                if not has_setup and current_state != STATE_EXHAUSTED
                     array.set(trade_state, i, TE_STATE_ACTIVE)
                     // Evaluate trade filters
-                    // Compute the imbalance ratio and total volume for this level
                     float ratio_i = array.get(kl_peak_ratio, i)
                     float totalVol = array.get(kl_poc_volume, i)
-                    // Estimate opposing volume: for buy levels ratio = buy/sell, so sellVol ˜ totalVol/(1+ratio).
-                    // For sell levels ratio = sell/buy, so buyVol ˜ totalVol/(1+ratio).
                     float opposingVol = totalVol / (1 + ratio_i)
                     float opposingPct = totalVol > 0 ? opposingVol / totalVol : 1.0
                     bool opposition_ok = opposingPct <= maxOpposingPct or ratio_i >= imbalanceRatio
@@ -1324,22 +1577,17 @@ if array.size(kl_state) > 0
                     float entryPrice = array.get(kl_entry_price, i)
                     float distance = math.abs(close - entryPrice)
                     bool qualityOK = tier_rank >= 2 and strength >= minStrength and distance <= maxDistanceTicks * syminfo.mintick
-                    // A level passes the filter if it aligns with the prevailing trend
-                    // and either meets the opposing-volume threshold or already clears
-                    // the baseline imbalance ratio. Extreme tiers still override both.
                     bool passFilter = (not trendFilterEnabled or (trendAlign and (opposition_ok or extremeLevel)) or extremeLevel) and qualityOK
 
                     if passFilter
-                        // Use the unified swing+ATR stop and RR-banded targeting helper
                         int seq_after_create = create_trade_for_level(i, trade_seq)
                         bool created = seq_after_create != trade_seq
                         trade_seq := seq_after_create
                         if not created
                             array.set(kl_last_test_bar, i, bar_index)
                     else
-                        // Filters not satisfied – remain ACTIVE and record touch
                         array.set(kl_last_test_bar, i, bar_index)
-            
+
             // ENTRY ? TESTING (trade is live)
             else if current_state == STATE_ENTRY
                 trade_seq := register_set_trade(i, trade_seq)
@@ -1360,10 +1608,8 @@ if array.size(kl_state) > 0
                 if test_count >= 2
                     array.set(kl_state, i, STATE_HELD)
 
-                // Check for retouch
                 bool touching_again = (low <= range_top) and (high >= range_bottom)
                 if touching_again and (bar_index > last_test + 3)
-                    // Retouch entries share the same stop/target sizing as first touches
                     int seq_after_create = create_trade_for_level(i, trade_seq)
                     bool created = seq_after_create != trade_seq
                     trade_seq := seq_after_create
@@ -1374,12 +1620,17 @@ if array.size(kl_state) > 0
             else if current_state == STATE_HELD
                 bool touching_again = (low <= range_top) and (high >= range_bottom)
                 if touching_again and (bar_index > last_test + 3)
-                    // Re-engage held levels with the unified trade creation rules
                     int seq_after_create = create_trade_for_level(i, trade_seq)
                     bool created = seq_after_create != trade_seq
                     trade_seq := seq_after_create
                     if not created
                         array.set(kl_last_test_bar, i, bar_index)
+
+    if array.size(removal_queue) > 0
+        for ri = array.size(removal_queue) - 1 to 0
+            int rem_idx = array.get(removal_queue, ri)
+            remove_zone(rem_idx)
+        rebuild_relevance()
 
 // ---------------------------------------------------------------------------
 // Dev debug overlay for the most recent trade candidate
@@ -1472,13 +1723,15 @@ if barstate.islast
         if not na(debugTargetLine)
             line.delete(debugTargetLine)
             debugTargetLine := na
-        if not na(debugLabel)
-            label.delete(debugLabel)
-            debugLabel := na
+            if not na(debugLabel)
+                label.delete(debugLabel)
+                debugLabel := na
 
 // ============================================================================
 // RENDERING - BOXES AND TRADE LINES
 // ============================================================================
+
+rebuild_relevance()
 
 if array.size(kl_box) > 0
     for i = 0 to array.size(kl_box) - 1
@@ -1487,25 +1740,32 @@ if array.size(kl_box) > 0
             string state = array.get(kl_state, i)
             string side = array.get(kl_side, i)
             string tier = array.get(kl_tier, i)
+            bool relevant = is_selected(kl_relevance, i)
             
             color base_color = side == "buy" ? col_buy : col_sell
             
             // Box rendering
             if showBoxes
-                int base_opacity = 70
-                if state == STATE_ACTIVE
+                int base_opacity = 95
+                if relevant
                     base_opacity := 70
-                else if state == STATE_ENTRY
-                    base_opacity := 40  // Brighter - trade setup ready!
-                else if state == STATE_TESTING
-                    base_opacity := 50
-                else if state == STATE_PROFIT
-                    base_opacity := 30
-                else if state == STATE_HELD
-                    base_opacity := 20
-                else
-                    base_opacity := 90
-                
+                    if state == STATE_ACTIVE
+                        base_opacity := 70
+                    else if state == STATE_TESTED
+                        base_opacity := 55
+                    else if state == STATE_HOLDING or state == STATE_HELD
+                        base_opacity := 30
+                    else if state == STATE_EXHAUSTED
+                        base_opacity := 45
+                    else if state == STATE_ENTRY
+                        base_opacity := 40  // Brighter - trade setup ready!
+                    else if state == STATE_TESTING
+                        base_opacity := 50
+                    else if state == STATE_PROFIT
+                        base_opacity := 30
+                    else
+                        base_opacity := 90
+
                 int tier_boost = tier == TIER_EXTREME ? 10 : tier == TIER_STRONG ? 5 : 0
                 int final_opacity = math.max(10, base_opacity - tier_boost)
                 
@@ -1514,7 +1774,7 @@ if array.size(kl_box) > 0
                 box.set_bgcolor(current_box, color.new(base_color, final_opacity))
             
             // Trade line rendering
-            if showTradeLines
+            if showTradeLines and relevant
                 float entry = array.get(kl_entry_price, i)
                 float stop = array.get(kl_stop_price, i)
                 float target = array.get(kl_target_price, i)
@@ -1796,36 +2056,15 @@ if showTables and not na(tbl_key)
     table.cell(tbl_key, 3, 1, "Δ%", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
     table.cell(tbl_key, 4, 1, "Score", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
 
-    int level_count = array.size(kl_poc)
+    int level_count = array.size(kl_relevance)
     int key_rows = mobileCompact ? 10 : 12  // mobile trims the key levels grid to 10 rows vs 12 on desktop
     int key_data_rows = math.max(key_rows - 2, 0)
     int display_count = math.min(level_count, key_data_rows)
-    var int[] kl_price_order = array.new_int()
-    var float[] kl_poc_buffer = array.new_float()
-    array.clear(kl_price_order)
-    array.clear(kl_poc_buffer)
-
-    // Build a descending-by-price ordering so rows stack from high to low
-    if level_count > 0
-        for i = 0 to level_count - 1
-            float poc_val_src = f_safe_get(kl_poc, i)
-            array.push(kl_poc_buffer, poc_val_src)
-        for n = 0 to display_count - 1
-            int best_pos = -1
-            float best_val = na
-            for j = 0 to level_count - 1
-                float poc_val = f_safe_get(kl_poc_buffer, j)
-                if not na(poc_val) and (na(best_val) or poc_val > best_val)
-                    best_val := poc_val
-                    best_pos := j
-            if best_pos >= 0 and best_pos < array.size(kl_poc_buffer)
-                array.push(kl_price_order, best_pos)
-                array.set(kl_poc_buffer, best_pos, na)
 
     for row = 0 to key_data_rows - 1
         int data_row = row + 2
-        if row < display_count and row < array.size(kl_price_order)
-            int level_idx = array.get(kl_price_order, row)
+        if row < display_count and row < array.size(kl_relevance)
+            int level_idx = array.get(kl_relevance, row)
             bool level_idx_ok = level_idx >= 0 and level_idx < array.size(kl_range_top) and level_idx < array.size(kl_range_bottom) and level_idx < array.size(kl_poc) and level_idx < array.size(kl_side) and level_idx < array.size(kl_peak_ratio) and level_idx < array.size(kl_net_delta) and level_idx < array.size(kl_total_volume) and level_idx < array.size(kl_tier) and level_idx < array.size(kl_strength) and level_idx < array.size(kl_state) and level_idx < array.size(kl_test_count) and level_idx < array.size(kl_rr_ratio)
             if not level_idx_ok
                 continue
