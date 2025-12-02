@@ -79,6 +79,9 @@ neutralLine = color.new(color.yellow, 10)
 // ============================================================================
 
 atr_value = ta.atr(atrLength)
+var float last_atr_value = na
+if not na(atr_value)
+    last_atr_value := atr_value
 bucket_size = atr_value / priceLevelsPerBar
 float swingLowCalc = ta.lowest(low, swingLookback)
 float swingHighCalc = ta.highest(high, swingLookback)
@@ -363,7 +366,8 @@ rebuild_relevance() =>
             if broken or too_old
                 remove_zone(i)
 
-    float max_distance_px = zoneAtrDistance * atr_value
+    float atr_for_distance = na(atr_value) ? last_atr_value : atr_value
+    float max_distance_px = zoneAtrDistance * (na(atr_for_distance) ? 10e6 : atr_for_distance)
     int total = array.size(kl_range_top)
     if total > 0
         for i = 0 to total - 1
@@ -1191,7 +1195,8 @@ if barstate.isconfirmed
                 string tier = get_tier(ratio)
                 float swing_ref = side == "buy" ? swingLowRef : swingHighRef
                 float dist_from_price = math.abs(close - price)
-                float max_distance_px = zoneAtrDistance * atr_value
+                float atr_for_distance = na(atr_value) ? last_atr_value : atr_value
+                float max_distance_px = zoneAtrDistance * (na(atr_for_distance) ? 10e6 : atr_for_distance)
                 bool within_distance = dist_from_price <= max_distance_px
 
                 // Only allow creation if the zone is within the ATR window and either
