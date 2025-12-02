@@ -5,15 +5,35 @@ indicator("LarsTrades Order Flow Zones", overlay=true, max_boxes_count=500, max_
 // INPUTS
 // ============================================================================
 
+// Market Presets
+marketPreset = input.string("MES", "Market Preset", options=["MES", "MNQ", "MGC"], group="Market Presets")
+
 // Order Flow Settings
-imbalanceRatio = input.float(3.0, "Imbalance Ratio Threshold", minval=2.0, step=0.1, group="Order Flow Detection")
-minLevelVolume = input.int(10, "Min Volume Per Level", minval=1, group="Order Flow Detection")
-priceLevelsPerBar = input.int(10, "Price Levels Per Bar", minval=5, maxval=20, group="Order Flow Detection")
+imbalanceRatio_MES = input.float(2.6, "Imbalance Ratio Threshold", minval=2.0, step=0.1, group="Order Flow - MES")
+minLevelVolume_MES = input.int(18, "Min Volume Per Level", minval=1, group="Order Flow - MES")
+priceLevelsPerBar_MES = input.int(12, "Price Levels Per Bar", minval=5, maxval=20, group="Order Flow - MES")
+
+imbalanceRatio_MNQ = input.float(3.4, "Imbalance Ratio Threshold", minval=2.0, step=0.1, group="Order Flow - MNQ")
+minLevelVolume_MNQ = input.int(35, "Min Volume Per Level", minval=1, group="Order Flow - MNQ")
+priceLevelsPerBar_MNQ = input.int(14, "Price Levels Per Bar", minval=5, maxval=20, group="Order Flow - MNQ")
+
+imbalanceRatio_MGC = input.float(4.6, "Imbalance Ratio Threshold", minval=2.0, step=0.1, group="Order Flow - MGC")
+minLevelVolume_MGC = input.int(50, "Min Volume Per Level", minval=1, group="Order Flow - MGC")
+priceLevelsPerBar_MGC = input.int(7, "Price Levels Per Bar", minval=5, maxval=20, group="Order Flow - MGC")
+
 barsToShow = input.int(6, "Bars to Show in History", minval=3, maxval=10, group="Order Flow Detection")
 
 // Key Level Settings
 maxKeyLevels = input.int(8, "Max Key Ranges to Track", minval=3, maxval=15, group="Key Levels")
-rangeMergeTicks = input.float(5.0, "Range Merge Distance (Ticks)", minval=2.0, step=0.5, group="Key Levels")
+
+rangeMergeTicks_MES = input.float(4.0, "Range Merge Distance (Ticks)", minval=2.0, step=0.5, group="Key Levels - MES")
+rangeMergeTicks_MNQ = input.float(7.0, "Range Merge Distance (Ticks)", minval=2.0, step=0.5, group="Key Levels - MNQ")
+rangeMergeTicks_MGC = input.float(3.0, "Range Merge Distance (Ticks)", minval=2.0, step=0.5, group="Key Levels - MGC")
+
+imbalanceRatio = marketPreset == "MES" ? imbalanceRatio_MES : marketPreset == "MNQ" ? imbalanceRatio_MNQ : imbalanceRatio_MGC
+minLevelVolume = marketPreset == "MES" ? minLevelVolume_MES : marketPreset == "MNQ" ? minLevelVolume_MNQ : minLevelVolume_MGC
+priceLevelsPerBar = marketPreset == "MES" ? priceLevelsPerBar_MES : marketPreset == "MNQ" ? priceLevelsPerBar_MNQ : priceLevelsPerBar_MGC
+rangeMergeTicks = marketPreset == "MES" ? rangeMergeTicks_MES : marketPreset == "MNQ" ? rangeMergeTicks_MNQ : rangeMergeTicks_MGC
 
 // Tiering thresholds
 extremeRatio = input.float(8.0, "EXTREME Tier Threshold", minval=6.0, step=0.5, group="Tiering")
