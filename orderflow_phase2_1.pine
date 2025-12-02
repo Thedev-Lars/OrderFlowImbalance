@@ -1,0 +1,945 @@
+//@version=6
+indicator("LarsTrades Order Flow + KIL v2.1", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// Volatility Settings
+atr_period = input.int(14, "ATR Period", minval=5, maxval=50, group="Volatility")
+base_levels = input.int(10, "Base Price Levels", minval=8, maxval=12, group="Volatility")
+
+// Order Flow Detection
+imbalance_ratio = input.float(4.0, "Imbalance Ratio Threshold", minval=2.5, maxval=6.0, step=0.5, group="Order Flow")
+
+// Instrument-Specific Volume Filtering
+instrument_type = input.string("Auto", "Instrument Type", 
+     options=["Auto", "MES", "MNQ", "MGC", "Custom"], group="Volume Filtering")
+mes_min_vol = input.int(35, "MES Min Volume", minval=10, group="Volume Filtering")
+mnq_min_vol = input.int(75, "MNQ Min Volume", minval=10, group="Volume Filtering")
+mgc_min_vol = input.int(20, "MGC Min Volume", minval=10, group="Volume Filtering")
+custom_min_vol = input.int(50, "Custom Min Volume", minval=1, group="Volume Filtering")
+
+// KIL Settings
+max_kil_zones = input.int(6, "Max KIL Zones to Track", minval=3, maxval=10, group="KIL")
+merge_distance_atr = input.float(1.0, "Zone Merge Distance (× ATR)", minval=0.3, maxval=2.0, step=0.1, group="KIL")
+relevance_distance_atr = input.float(2.5, "Zone Relevance Distance (× ATR)", minval=1.0, step=0.5, group="KIL")
+tier_extreme = input.float(8.0, "⭐⭐⭐ EXTREME Threshold", minval=6.0, step=0.5, group="KIL")
+tier_strong = input.float(5.0, "⭐⭐ STRONG Threshold", minval=4.0, step=0.5, group="KIL")
+exhaustion_tests = input.int(3, "Tests Before Exhaustion", minval=2, maxval=5, group="KIL")
+
+// Break/Retest Logic
+break_confirm_bars = input.int(2, "Bars to Confirm Break", minval=1, maxval=3, group="Break Logic")
+volume_spike_mult = input.float(1.5, "Volume Spike Multiplier", minval=1.0, step=0.1, group="Break Logic")
+min_break_ticks = input.int(3, "Min Break Distance (Ticks)", minval=1, group="Break Logic")
+
+// Display Settings
+show_live_bar = input.bool(true, "Show Live Bar", group="Display")
+show_confirmed_bars = input.int(2, "Show Last N Confirmed Bars", minval=1, maxval=3, group="Display")
+show_kil_boxes = input.bool(true, "Show KIL Boxes on Chart", group="Display")
+show_poc_lines = input.bool(true, "Show POC Lines", group="Display")
+
+// Colors
+col_buy = input.color(#00ff41, "Buy Color", group="Colors")
+col_sell = input.color(#b968ff, "Sell Color", group="Colors")
+col_conflict = input.color(#ff9800, "Conflict Color", group="Colors")
+
+// ============================================================================
+// ADAPTIVE VOLATILITY SYSTEM
+// ============================================================================
+
+atr_value = ta.atr(atr_period)
+avg_volume = ta.sma(volume, 20)
+
+base_bucket = atr_value / base_levels
+min_bucket = syminfo.mintick
+max_bucket = atr_value / 5
+bucket_size = math.max(min_bucket, math.min(max_bucket, base_bucket))
+
+get_adaptive_levels(float bar_range, float atr_val) =>
+    float range_ratio = bar_range / atr_val
+    int levels = base_levels
+    if range_ratio > 2.0
+        levels := 12
+    else if range_ratio < 1.0
+        levels := 8
+    levels
+
+// ============================================================================
+// INSTRUMENT-SPECIFIC MIN VOLUME
+// ============================================================================
+
+get_min_volume() =>
+    if instrument_type == "MES"
+        mes_min_vol
+    else if instrument_type == "MNQ"
+        mnq_min_vol
+    else if instrument_type == "MGC"
+        mgc_min_vol
+    else if instrument_type == "Custom"
+        custom_min_vol
+    else  // Auto-detect based on symbol
+        if str.contains(syminfo.ticker, "MES")
+            mes_min_vol
+        else if str.contains(syminfo.ticker, "MNQ")
+            mnq_min_vol
+        else if str.contains(syminfo.ticker, "MGC") or str.contains(syminfo.ticker, "GC")
+            mgc_min_vol
+        else
+            50  // Safe default for unknown instruments
+
+min_volume = get_min_volume()
+
+// ============================================================================
+// IMPROVED TICK TRACKING ENGINE
+// ============================================================================
+
+var array<float> live_prices = array.new<float>()
+var array<float> live_buy_vol = array.new<float>()
+var array<float> live_sell_vol = array.new<float>()
+var float last_tick_price = na
+var float last_volume = 0.0
+
+find_bucket_index(float price, float bar_low, float bar_high, float bucket, int level_count) =>
+    if na(price) or na(bar_low) or na(bar_high)
+        -1
+    else
+        float bar_range = bar_high - bar_low
+        if bar_range <= 0
+            0
+        else
+            int idx = math.floor((price - bar_low) / bucket)
+            math.min(math.max(idx, 0), level_count - 1)
+
+if barstate.isconfirmed
+    array.clear(live_prices)
+    array.clear(live_buy_vol)
+    array.clear(live_sell_vol)
+    last_tick_price := close
+    last_volume := volume
+
+if barstate.isfirst or (barstate.isnew and array.size(live_prices) == 0)
+    array.clear(live_prices)
+    array.clear(live_buy_vol)
+    array.clear(live_sell_vol)
+    
+    float bar_range = high - low
+    int level_count = get_adaptive_levels(bar_range, atr_value)
+    
+    for i = 0 to level_count - 1
+        float bucket_bottom = low + (i * bucket_size)
+        float bucket_top = low + ((i + 1) * bucket_size)
+        float bucket_mid = (bucket_bottom + bucket_top) / 2
+        
+        array.push(live_prices, bucket_mid)
+        array.push(live_buy_vol, 0.0)
+        array.push(live_sell_vol, 0.0)
+    
+    last_tick_price := close
+    last_volume := volume
+
+// FIX #1: IMPROVED VOLUME DISTRIBUTION (Close-Position Formula)
+if not barstate.isconfirmed and not na(last_tick_price)
+    float vol_delta = volume - last_volume
+    
+    if vol_delta > 0 and array.size(live_prices) > 0
+        int bucket_idx = find_bucket_index(close, low, high, bucket_size, array.size(live_prices))
+        
+        if bucket_idx >= 0 and bucket_idx < array.size(live_prices)
+            float bar_range = high - low
+            
+            if bar_range > 0
+                // Close-position in range formula (75-80% accuracy)
+                float buy_pressure = (close - low) / bar_range
+                float buy_vol = vol_delta * buy_pressure
+                float sell_vol = vol_delta * (1 - buy_pressure)
+                
+                float current_buy = array.get(live_buy_vol, bucket_idx)
+                float current_sell = array.get(live_sell_vol, bucket_idx)
+                array.set(live_buy_vol, bucket_idx, current_buy + buy_vol)
+                array.set(live_sell_vol, bucket_idx, current_sell + sell_vol)
+            else
+                // Doji bar - split 50/50
+                float current_buy = array.get(live_buy_vol, bucket_idx)
+                float current_sell = array.get(live_sell_vol, bucket_idx)
+                array.set(live_buy_vol, bucket_idx, current_buy + (vol_delta * 0.5))
+                array.set(live_sell_vol, bucket_idx, current_sell + (vol_delta * 0.5))
+    
+    last_tick_price := close
+    last_volume := volume
+
+var array<array<float>> confirmed_prices = array.new<array<float>>()
+var array<array<float>> confirmed_buys = array.new<array<float>>()
+var array<array<float>> confirmed_sells = array.new<array<float>>()
+var array<int> confirmed_bar_indices = array.new<int>()
+
+if barstate.isconfirmed and array.size(live_prices) > 0
+    array<float> prices_copy = array.copy(live_prices)
+    array<float> buys_copy = array.copy(live_buy_vol)
+    array<float> sells_copy = array.copy(live_sell_vol)
+    
+    array.push(confirmed_prices, prices_copy)
+    array.push(confirmed_buys, buys_copy)
+    array.push(confirmed_sells, sells_copy)
+    array.push(confirmed_bar_indices, bar_index)
+    
+    int max_bars = show_confirmed_bars
+    while array.size(confirmed_prices) > max_bars
+        array.shift(confirmed_prices)
+        array.shift(confirmed_buys)
+        array.shift(confirmed_sells)
+        array.shift(confirmed_bar_indices)
+
+get_bar_data(int bar_back) =>
+    array<float> prices = array.new<float>()
+    array<float> buys = array.new<float>()
+    array<float> sells = array.new<float>()
+    
+    if bar_back == 0 and show_live_bar
+        prices := array.copy(live_prices)
+        buys := array.copy(live_buy_vol)
+        sells := array.copy(live_sell_vol)
+    else
+        int actual_idx = bar_back - (show_live_bar ? 1 : 0)
+        int confirmed_idx = array.size(confirmed_prices) - 1 - actual_idx
+        
+        if confirmed_idx >= 0 and confirmed_idx < array.size(confirmed_prices)
+            prices := array.get(confirmed_prices, confirmed_idx)
+            buys := array.get(confirmed_buys, confirmed_idx)
+            sells := array.get(confirmed_sells, confirmed_idx)
+    
+    [prices, buys, sells]
+
+// ============================================================================
+// KEY IMBALANCE LEVEL (KIL) SYSTEM
+// ============================================================================
+
+// FIX #5: ADD EXHAUSTED STATE
+var string STATE_ACTIVE = "ACTIVE"
+var string STATE_TESTED = "TESTED"
+var string STATE_HOLDING = "HOLDING"
+var string STATE_WEAK = "WEAK"
+var string STATE_EXHAUSTED = "EXHAUSTED"
+var string STATE_BROKEN = "BROKEN"
+var string STATE_CONFLICT = "CONFLICT"
+
+var string TIER_EXTREME = "⭐⭐⭐"
+var string TIER_STRONG = "⭐⭐"
+var string TIER_MODERATE = "⭐"
+
+var array<float> kil_top = array.new<float>()
+var array<float> kil_bottom = array.new<float>()
+var array<float> kil_poc = array.new<float>()
+var array<string> kil_side = array.new<string>()
+var array<float> kil_peak_ratio = array.new<float>()
+var array<float> kil_strength = array.new<float>()
+var array<float> kil_total_volume = array.new<float>()
+var array<string> kil_tier = array.new<string>()
+var array<string> kil_state = array.new<string>()
+var array<int> kil_test_count = array.new<int>()
+var array<int> kil_birth_bar = array.new<int>()
+var array<int> kil_last_test_bar = array.new<int>()
+var array<int> kil_break_confirm_count = array.new<int>()
+var array<box> kil_box = array.new<box>()
+var array<line> kil_poc_line = array.new<line>()
+
+get_tier(float ratio) =>
+    if ratio >= tier_extreme
+        TIER_EXTREME
+    else if ratio >= tier_strong
+        TIER_STRONG
+    else
+        TIER_MODERATE
+
+get_tier_rank(string tier) =>
+    tier == TIER_EXTREME ? 3 : tier == TIER_STRONG ? 2 : 1
+
+check_conflict(int zone_idx) =>
+    bool has_conflict = false
+    string my_side = array.get(kil_side, zone_idx)
+    float my_poc = array.get(kil_poc, zone_idx)
+    float merge_dist = merge_distance_atr * atr_value
+    
+    for i = 0 to array.size(kil_poc) - 1
+        if i != zone_idx
+            string other_side = array.get(kil_side, i)
+            float other_poc = array.get(kil_poc, i)
+            string other_state = array.get(kil_state, i)
+            
+            if my_side != other_side and other_state != STATE_BROKEN
+                if math.abs(my_poc - other_poc) <= merge_dist
+                    has_conflict := true
+                    break
+    
+    has_conflict
+
+// ============================================================================
+// IMBALANCE DETECTION & ZONE CREATION
+// ============================================================================
+
+if barstate.isconfirmed
+    int confirmed_idx = array.size(confirmed_prices) - 1
+    array<float> prices = confirmed_idx >= 0 ? array.get(confirmed_prices, confirmed_idx) : array.new<float>()
+    array<float> buys = confirmed_idx >= 0 ? array.get(confirmed_buys, confirmed_idx) : array.new<float>()
+    array<float> sells = confirmed_idx >= 0 ? array.get(confirmed_sells, confirmed_idx) : array.new<float>()
+    
+    var array<float> imb_prices = array.new<float>()
+    var array<float> imb_buy_vols = array.new<float>()
+    var array<float> imb_sell_vols = array.new<float>()
+    var array<float> imb_ratios = array.new<float>()
+    var array<string> imb_sides = array.new<string>()
+    
+    array.clear(imb_prices)
+    array.clear(imb_buy_vols)
+    array.clear(imb_sell_vols)
+    array.clear(imb_ratios)
+    array.clear(imb_sides)
+    
+    if array.size(prices) > 0
+        for i = 0 to array.size(prices) - 1
+            float price = array.get(prices, i)
+            float buy_vol = array.get(buys, i)
+            float sell_vol = array.get(sells, i)
+            float total_vol = buy_vol + sell_vol
+            
+            float ratio = buy_vol >= sell_vol ? 
+                 (sell_vol > 0 ? buy_vol / sell_vol : buy_vol) : 
+                 (buy_vol > 0 ? sell_vol / buy_vol : sell_vol)
+            
+            // FIX #3: Check that DOMINANT side meets minimum volume
+            float dominant_vol = buy_vol > sell_vol ? buy_vol : sell_vol
+            
+            if ratio >= imbalance_ratio and dominant_vol >= min_volume
+                array.push(imb_prices, price)
+                array.push(imb_buy_vols, buy_vol)
+                array.push(imb_sell_vols, sell_vol)
+                array.push(imb_ratios, ratio)
+                array.push(imb_sides, buy_vol > sell_vol ? "buy" : "sell")
+    
+    if array.size(imb_prices) > 0
+        float merge_dist = merge_distance_atr * atr_value  // FIX #4: Now 1.0× ATR
+        
+        int i = 0
+        while i < array.size(imb_prices)
+            float start_price = array.get(imb_prices, i)
+            string side = array.get(imb_sides, i)
+            float start_buy = array.get(imb_buy_vols, i)
+            float start_sell = array.get(imb_sell_vols, i)
+            float start_ratio = array.get(imb_ratios, i)
+            
+            float zone_top = start_price + (bucket_size / 2)
+            float zone_bottom = start_price - (bucket_size / 2)
+            float total_buy = start_buy
+            float total_sell = start_sell
+            float peak_ratio = start_ratio
+            float poc_price = start_price
+            float poc_volume = start_buy + start_sell
+            
+            int j = i + 1
+            while j < array.size(imb_prices)
+                float next_price = array.get(imb_prices, j)
+                string next_side = array.get(imb_sides, j)
+                
+                if next_side == side and math.abs(next_price - start_price) <= merge_dist
+                    float next_buy = array.get(imb_buy_vols, j)
+                    float next_sell = array.get(imb_sell_vols, j)
+                    float next_ratio = array.get(imb_ratios, j)
+                    float next_vol = next_buy + next_sell
+                    
+                    zone_top := math.max(zone_top, next_price + (bucket_size / 2))
+                    zone_bottom := math.min(zone_bottom, next_price - (bucket_size / 2))
+                    total_buy += next_buy
+                    total_sell += next_sell
+                    
+                    if next_ratio > peak_ratio
+                        peak_ratio := next_ratio
+                    
+                    if next_vol > poc_volume
+                        poc_price := next_price
+                        poc_volume := next_vol
+                    
+                    j += 1
+                else
+                    break
+            
+            float delta = math.abs(total_buy - total_sell)
+            float strength = (delta * peak_ratio) / 100
+            string tier = get_tier(peak_ratio)
+            
+            bool merged = false
+            if array.size(kil_poc) > 0
+                for k = 0 to array.size(kil_poc) - 1
+                    if array.get(kil_side, k) == side and array.get(kil_state, k) != STATE_BROKEN
+                        float existing_top = array.get(kil_top, k)
+                        float existing_bottom = array.get(kil_bottom, k)
+                        
+                        bool overlaps = (zone_bottom <= existing_top + merge_dist) and (zone_top >= existing_bottom - merge_dist)
+                        
+                        if overlaps
+                            float new_top = math.max(existing_top, zone_top)
+                            float new_bottom = math.min(existing_bottom, zone_bottom)
+                            
+                            array.set(kil_top, k, new_top)
+                            array.set(kil_bottom, k, new_bottom)
+                            
+                            float existing_vol = array.get(kil_total_volume, k)
+                            if poc_volume > existing_vol
+                                array.set(kil_poc, k, poc_price)
+                                array.set(kil_total_volume, k, poc_volume)
+                            
+                            float existing_ratio = array.get(kil_peak_ratio, k)
+                            if peak_ratio > existing_ratio
+                                array.set(kil_peak_ratio, k, peak_ratio)
+                                array.set(kil_tier, k, get_tier(peak_ratio))
+                            
+                            float new_strength = array.get(kil_strength, k) + strength
+                            array.set(kil_strength, k, new_strength)
+                            
+                            merged := true
+                            break
+            
+            if not merged
+                array.push(kil_top, zone_top)
+                array.push(kil_bottom, zone_bottom)
+                array.push(kil_poc, poc_price)
+                array.push(kil_side, side)
+                array.push(kil_peak_ratio, peak_ratio)
+                array.push(kil_strength, strength)
+                array.push(kil_total_volume, total_buy + total_sell)
+                array.push(kil_tier, tier)
+                array.push(kil_state, STATE_ACTIVE)
+                array.push(kil_test_count, 0)
+                array.push(kil_birth_bar, bar_index)
+                array.push(kil_last_test_bar, 0)
+                array.push(kil_break_confirm_count, 0)
+                
+                color box_color = side == "buy" ? color.new(col_buy, 70) : color.new(col_sell, 70)
+                box new_box = box.new(bar_index, zone_top, bar_index + 1, zone_bottom, 
+                     border_color=box_color, bgcolor=box_color, border_width=1)
+                array.push(kil_box, new_box)
+                
+                line new_line = line.new(bar_index, poc_price, bar_index + 1, poc_price,
+                     color=color.new(side == "buy" ? col_buy : col_sell, 50), width=2, style=line.style_solid)
+                array.push(kil_poc_line, new_line)
+            
+            i := j
+
+// ============================================================================
+// ZONE STATE MANAGEMENT (WITH EXHAUSTION)
+// ============================================================================
+
+if array.size(kil_state) > 0
+    for i = 0 to array.size(kil_state) - 1
+        string current_state = array.get(kil_state, i)
+        string side = array.get(kil_side, i)
+        float zone_top = array.get(kil_top, i)
+        float zone_bottom = array.get(kil_bottom, i)
+        float poc = array.get(kil_poc, i)
+        int test_count = array.get(kil_test_count, i)
+        int break_count = array.get(kil_break_confirm_count, i)
+        
+        bool price_touching = (low <= zone_top) and (high >= zone_bottom)
+        bool body_in_zone = (close <= zone_top) and (close >= zone_bottom)
+        
+        // ACTIVE → TESTED
+        if current_state == STATE_ACTIVE and price_touching
+            array.set(kil_state, i, STATE_TESTED)
+            array.set(kil_last_test_bar, i, bar_index)
+            array.set(kil_test_count, i, 1)
+        
+        // TESTED → HOLDING or WEAK
+        else if current_state == STATE_TESTED
+            if price_touching
+                if body_in_zone
+                    array.set(kil_state, i, STATE_WEAK)
+                else
+                    array.set(kil_state, i, STATE_HOLDING)
+                    array.set(kil_test_count, i, test_count + 1)
+        
+        // HOLDING → EXHAUSTED or retest or break
+        else if current_state == STATE_HOLDING
+            // FIX #5: Check for exhaustion
+            if test_count >= exhaustion_tests
+                array.set(kil_state, i, STATE_EXHAUSTED)
+            else if price_touching
+                if body_in_zone
+                    array.set(kil_state, i, STATE_WEAK)
+                else
+                    array.set(kil_test_count, i, test_count + 1)
+                    array.set(kil_last_test_bar, i, bar_index)
+            
+            // Check for break
+            bool broke_through = false
+            if side == "buy"
+                broke_through := close < zone_bottom
+            else
+                broke_through := close > zone_top
+            
+            if broke_through
+                float break_dist = side == "buy" ? zone_bottom - close : close - zone_top
+                float min_break_dist = min_break_ticks * syminfo.mintick
+                bool vol_spike = volume > (avg_volume * volume_spike_mult)
+                
+                if break_dist >= min_break_dist
+                    array.set(kil_break_confirm_count, i, break_count + 1)
+                    
+                    if break_count + 1 >= break_confirm_bars or vol_spike
+                        array.set(kil_state, i, STATE_BROKEN)
+                else
+                    array.set(kil_break_confirm_count, i, 0)
+            else
+                array.set(kil_break_confirm_count, i, 0)
+        
+        // EXHAUSTED → BROKEN (exhausted zones can still break)
+        else if current_state == STATE_EXHAUSTED
+            bool broke_through = false
+            if side == "buy"
+                broke_through := close < zone_bottom
+            else
+                broke_through := close > zone_top
+            
+            if broke_through
+                float break_dist = side == "buy" ? zone_bottom - close : close - zone_top
+                float min_break_dist = min_break_ticks * syminfo.mintick
+                
+                if break_dist >= min_break_dist
+                    array.set(kil_state, i, STATE_BROKEN)
+        
+        // WEAK → HOLDING (redeemed) or BROKEN
+        else if current_state == STATE_WEAK
+            if price_touching and not body_in_zone
+                array.set(kil_state, i, STATE_HOLDING)
+                array.set(kil_test_count, i, test_count + 1)
+            else if not price_touching
+                bool broke_through = false
+                if side == "buy"
+                    broke_through := close < zone_bottom
+                else
+                    broke_through := close > zone_top
+                
+                if broke_through
+                    array.set(kil_state, i, STATE_BROKEN)
+
+// ============================================================================
+// ZONE FILTERING & SORTING
+// ============================================================================
+
+cleanup_zones() =>
+    float relevance_dist = relevance_distance_atr * atr_value
+    int current_bar = bar_index
+    
+    if array.size(kil_state) > 0
+        for i = array.size(kil_state) - 1 to 0
+            string state = array.get(kil_state, i)
+            float poc = array.get(kil_poc, i)
+            int birth = array.get(kil_birth_bar, i)
+            int last_test = array.get(kil_last_test_bar, i)
+            
+            bool should_remove = false
+            
+            if state == STATE_BROKEN
+                should_remove := true
+            else if state == STATE_WEAK
+                if (current_bar - last_test) > 20
+                    should_remove := true
+            
+            float dist_from_price = math.abs(close - poc)
+            if dist_from_price > relevance_dist
+                should_remove := true
+            
+            if should_remove
+                box.delete(array.get(kil_box, i))
+                line.delete(array.get(kil_poc_line, i))
+                
+                array.remove(kil_top, i)
+                array.remove(kil_bottom, i)
+                array.remove(kil_poc, i)
+                array.remove(kil_side, i)
+                array.remove(kil_peak_ratio, i)
+                array.remove(kil_strength, i)
+                array.remove(kil_total_volume, i)
+                array.remove(kil_tier, i)
+                array.remove(kil_state, i)
+                array.remove(kil_test_count, i)
+                array.remove(kil_birth_bar, i)
+                array.remove(kil_last_test_bar, i)
+                array.remove(kil_break_confirm_count, i)
+                array.remove(kil_box, i)
+                array.remove(kil_poc_line, i)
+
+cleanup_zones()
+
+sort_zones_by_priority() =>
+    int n = array.size(kil_state)
+    if n <= 1
+        n
+    else
+        for i = 0 to n - 2
+            for j = 0 to n - 2 - i
+                string state_j = array.get(kil_state, j)
+                string state_j1 = array.get(kil_state, j + 1)
+                string tier_j = array.get(kil_tier, j)
+                string tier_j1 = array.get(kil_tier, j + 1)
+                float poc_j = array.get(kil_poc, j)
+                float poc_j1 = array.get(kil_poc, j + 1)
+                
+                int priority_j = 0
+                int priority_j1 = 0
+                
+                // FIX #5: Update priority scoring with EXHAUSTED
+                if state_j == STATE_HOLDING
+                    priority_j += 1000
+                else if state_j == STATE_TESTED
+                    priority_j += 500
+                else if state_j == STATE_ACTIVE
+                    priority_j += 100
+                else if state_j == STATE_EXHAUSTED
+                    priority_j += 50
+                
+                if state_j1 == STATE_HOLDING
+                    priority_j1 += 1000
+                else if state_j1 == STATE_TESTED
+                    priority_j1 += 500
+                else if state_j1 == STATE_ACTIVE
+                    priority_j1 += 100
+                else if state_j1 == STATE_EXHAUSTED
+                    priority_j1 += 50
+                
+                priority_j += get_tier_rank(tier_j) * 100
+                priority_j1 += get_tier_rank(tier_j1) * 100
+                
+                float dist_j = math.abs(close - poc_j)
+                float dist_j1 = math.abs(close - poc_j1)
+                priority_j += int(1000 / (dist_j + 1))
+                priority_j1 += int(1000 / (dist_j1 + 1))
+                
+                bool should_swap = priority_j < priority_j1
+                
+                if should_swap
+                    float tmp_f = array.get(kil_top, j)
+                    array.set(kil_top, j, array.get(kil_top, j + 1))
+                    array.set(kil_top, j + 1, tmp_f)
+                    
+                    tmp_f := array.get(kil_bottom, j)
+                    array.set(kil_bottom, j, array.get(kil_bottom, j + 1))
+                    array.set(kil_bottom, j + 1, tmp_f)
+                    
+                    tmp_f := array.get(kil_poc, j)
+                    array.set(kil_poc, j, array.get(kil_poc, j + 1))
+                    array.set(kil_poc, j + 1, tmp_f)
+                    
+                    string tmp_s = array.get(kil_side, j)
+                    array.set(kil_side, j, array.get(kil_side, j + 1))
+                    array.set(kil_side, j + 1, tmp_s)
+                    
+                    tmp_f := array.get(kil_peak_ratio, j)
+                    array.set(kil_peak_ratio, j, array.get(kil_peak_ratio, j + 1))
+                    array.set(kil_peak_ratio, j + 1, tmp_f)
+                    
+                    tmp_f := array.get(kil_strength, j)
+                    array.set(kil_strength, j, array.get(kil_strength, j + 1))
+                    array.set(kil_strength, j + 1, tmp_f)
+                    
+                    tmp_f := array.get(kil_total_volume, j)
+                    array.set(kil_total_volume, j, array.get(kil_total_volume, j + 1))
+                    array.set(kil_total_volume, j + 1, tmp_f)
+                    
+                    tmp_s := array.get(kil_tier, j)
+                    array.set(kil_tier, j, array.get(kil_tier, j + 1))
+                    array.set(kil_tier, j + 1, tmp_s)
+                    
+                    tmp_s := array.get(kil_state, j)
+                    array.set(kil_state, j, array.get(kil_state, j + 1))
+                    array.set(kil_state, j + 1, tmp_s)
+                    
+                    int tmp_i = array.get(kil_test_count, j)
+                    array.set(kil_test_count, j, array.get(kil_test_count, j + 1))
+                    array.set(kil_test_count, j + 1, tmp_i)
+                    
+                    tmp_i := array.get(kil_birth_bar, j)
+                    array.set(kil_birth_bar, j, array.get(kil_birth_bar, j + 1))
+                    array.set(kil_birth_bar, j + 1, tmp_i)
+                    
+                    tmp_i := array.get(kil_last_test_bar, j)
+                    array.set(kil_last_test_bar, j, array.get(kil_last_test_bar, j + 1))
+                    array.set(kil_last_test_bar, j + 1, tmp_i)
+                    
+                    tmp_i := array.get(kil_break_confirm_count, j)
+                    array.set(kil_break_confirm_count, j, array.get(kil_break_confirm_count, j + 1))
+                    array.set(kil_break_confirm_count, j + 1, tmp_i)
+                    
+                    box tmp_box = array.get(kil_box, j)
+                    array.set(kil_box, j, array.get(kil_box, j + 1))
+                    array.set(kil_box, j + 1, tmp_box)
+                    
+                    line tmp_line = array.get(kil_poc_line, j)
+                    array.set(kil_poc_line, j, array.get(kil_poc_line, j + 1))
+                    array.set(kil_poc_line, j + 1, tmp_line)
+        
+        n
+
+sort_zones_by_priority()
+
+while array.size(kil_state) > max_kil_zones
+    int last_idx = array.size(kil_state) - 1
+    box.delete(array.get(kil_box, last_idx))
+    line.delete(array.get(kil_poc_line, last_idx))
+    
+    array.pop(kil_top)
+    array.pop(kil_bottom)
+    array.pop(kil_poc)
+    array.pop(kil_side)
+    array.pop(kil_peak_ratio)
+    array.pop(kil_strength)
+    array.pop(kil_total_volume)
+    array.pop(kil_tier)
+    array.pop(kil_state)
+    array.pop(kil_test_count)
+    array.pop(kil_birth_bar)
+    array.pop(kil_last_test_bar)
+    array.pop(kil_break_confirm_count)
+    array.pop(kil_box)
+    array.pop(kil_poc_line)
+
+// ============================================================================
+// VISUAL RENDERING
+// ============================================================================
+
+if show_kil_boxes and array.size(kil_box) > 0
+    for i = 0 to array.size(kil_box) - 1
+        box current_box = array.get(kil_box, i)
+        line current_line = array.get(kil_poc_line, i)
+        string state = array.get(kil_state, i)
+        string side = array.get(kil_side, i)
+        bool has_conflict = check_conflict(i)
+        
+        // FIX #5: Include EXHAUSTED in opacity logic
+        int opacity = 70
+        if state == STATE_HOLDING
+            opacity := 30
+        else if state == STATE_TESTED
+            opacity := 50
+        else if state == STATE_ACTIVE
+            opacity := 70
+        else if state == STATE_EXHAUSTED
+            opacity := 80
+        else if state == STATE_WEAK
+            opacity := 85
+        
+        color base_color = has_conflict ? col_conflict : (side == "buy" ? col_buy : col_sell)
+        
+        box.set_right(current_box, bar_index + 1)
+        box.set_border_color(current_box, color.new(base_color, opacity))
+        box.set_bgcolor(current_box, color.new(base_color, opacity))
+        
+        if show_poc_lines
+            line.set_x2(current_line, bar_index + 1)
+            line.set_color(current_line, color.new(base_color, opacity - 20))
+
+// ============================================================================
+// ORDER FLOW TABLE
+// ============================================================================
+
+int total_bars = (show_live_bar ? 1 : 0) + show_confirmed_bars
+int columns = total_bars * 4
+int rows = 12 + 2
+
+var table tbl_flow = table.new(position=position.top_right, columns=columns, rows=rows, bgcolor=color.new(color.black, 85), border_width=1)
+
+if barstate.islast
+    table.cell(tbl_flow, 0, 0, "ORDER FLOW LIVE", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
+    table.merge_cells(tbl_flow, 0, 0, columns - 1, 0)
+    
+    int current_row = 1
+    
+    for bar_idx = 0 to total_bars - 1
+        int col_start = bar_idx * 4
+        string bar_label = ""
+        
+        if bar_idx == 0 and show_live_bar
+            bar_label := "NOW"
+        else
+            int bars_back = bar_idx - (show_live_bar ? 1 : 0) + 1
+            bar_label := "-" + str.tostring(bars_back)
+        
+        color label_color = bar_label == "NOW" ? color.lime : color.yellow
+        table.cell(tbl_flow, col_start, current_row, bar_label, text_color=label_color, text_size=size.small, bgcolor=color.new(color.gray, 70))
+        table.merge_cells(tbl_flow, col_start, current_row, col_start + 3, current_row)
+    
+    current_row += 1
+    
+    for bar_idx = 0 to total_bars - 1
+        int col_start = bar_idx * 4
+        table.cell(tbl_flow, col_start + 0, current_row, "Price", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+        table.cell(tbl_flow, col_start + 1, current_row, "B:S", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+        table.cell(tbl_flow, col_start + 2, current_row, "Δ", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+        table.cell(tbl_flow, col_start + 3, current_row, "🔥", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 75))
+    
+    current_row += 1
+    
+    for row = 0 to 9
+        for bar_idx = 0 to total_bars - 1
+            int col_start = bar_idx * 4
+            
+            [prices, buys, sells] = get_bar_data(bar_idx)
+            int level_count = array.size(prices)
+            
+            if level_count > 0 and row < level_count
+                int idx = level_count - 1 - row
+                float price = array.get(prices, idx)
+                float buy_vol = array.get(buys, idx)
+                float sell_vol = array.get(sells, idx)
+                float delta = buy_vol - sell_vol
+                float total_vol = buy_vol + sell_vol
+                
+                float ratio = buy_vol >= sell_vol ? 
+                     (sell_vol > 0 ? buy_vol / sell_vol : buy_vol) : 
+                     (buy_vol > 0 ? sell_vol / buy_vol : sell_vol)
+                
+                float dominant_vol = buy_vol > sell_vol ? buy_vol : sell_vol
+                bool is_imbalance = ratio >= imbalance_ratio and dominant_vol >= min_volume
+                
+                color row_bg = color.new(color.black, 92)
+                if is_imbalance
+                    row_bg := buy_vol > sell_vol ? color.new(col_buy, 85) : color.new(col_sell, 85)
+                
+                table.cell(tbl_flow, col_start + 0, current_row, str.tostring(price, format.mintick), 
+                     text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                
+                string bs_text = str.tostring(math.round(buy_vol)) + ":" + str.tostring(math.round(sell_vol))
+                table.cell(tbl_flow, col_start + 1, current_row, bs_text, 
+                     text_color=color.white, text_size=size.small, bgcolor=row_bg)
+                
+                color delta_color = delta > 0 ? col_buy : col_sell
+                table.cell(tbl_flow, col_start + 2, current_row, str.tostring(math.round(delta), "+#;-#"), 
+                     text_color=delta_color, text_size=size.small, bgcolor=row_bg)
+                
+                string imb_marker = is_imbalance ? "🔥" : ""
+                table.cell(tbl_flow, col_start + 3, current_row, imb_marker, 
+                     text_color=color.orange, text_size=size.small, bgcolor=row_bg)
+            else
+                color empty_bg = color.new(color.gray, 95)
+                table.cell(tbl_flow, col_start + 0, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+                table.cell(tbl_flow, col_start + 1, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+                table.cell(tbl_flow, col_start + 2, current_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+                table.cell(tbl_flow, col_start + 3, current_row, "", bgcolor=empty_bg)
+        
+        current_row += 1
+
+// ============================================================================
+// KIL TABLE
+// ============================================================================
+
+var table tbl_kil = table.new(position=position.middle_left, columns=10, rows=8, bgcolor=color.new(color.black, 85), border_width=1)
+
+if barstate.islast
+    table.cell(tbl_kil, 0, 0, "KEY IMBALANCE LEVELS", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 60))
+    table.merge_cells(tbl_kil, 0, 0, 9, 0)
+    
+    table.cell(tbl_kil, 0, 1, "Range", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_kil, 1, 1, "POC", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_kil, 2, 1, "Side", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_kil, 3, 1, "Ratio", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_kil, 4, 1, "Tier", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_kil, 5, 1, "Score", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_kil, 6, 1, "Status", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_kil, 7, 1, "Tests", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_kil, 8, 1, "Dist", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.cell(tbl_kil, 9, 1, "Age", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    
+    int display_count = math.min(array.size(kil_state), max_kil_zones)
+    for row = 0 to 5
+        int data_row = row + 2
+        
+        if row < display_count
+            float zone_top = array.get(kil_top, row)
+            float zone_bottom = array.get(kil_bottom, row)
+            float poc = array.get(kil_poc, row)
+            string side = array.get(kil_side, row)
+            float peak_ratio = array.get(kil_peak_ratio, row)
+            string tier = array.get(kil_tier, row)
+            float strength = array.get(kil_strength, row)
+            string state = array.get(kil_state, row)
+            int tests = array.get(kil_test_count, row)
+            int birth = array.get(kil_birth_bar, row)
+            
+            bool has_conflict = check_conflict(row)
+            float dist_ticks = math.abs(close - poc) / syminfo.mintick
+            int age_bars = bar_index - birth
+            
+            color side_color = has_conflict ? col_conflict : (side == "buy" ? col_buy : col_sell)
+            color state_color = color.white
+            color row_bg = color.new(color.black, 90)
+            
+            // FIX #5: Add EXHAUSTED to table display
+            if state == STATE_HOLDING
+                state_color := color.lime
+                row_bg := color.new(color.lime, 92)
+            else if state == STATE_TESTED
+                state_color := color.aqua
+                row_bg := color.new(color.aqua, 92)
+            else if state == STATE_EXHAUSTED
+                state_color := color.gray
+                row_bg := color.new(color.gray, 90)
+            else if state == STATE_WEAK
+                state_color := color.orange
+                row_bg := color.new(color.orange, 92)
+            else if state == STATE_ACTIVE
+                state_color := color.white
+            
+            string range_str = str.tostring(zone_bottom, format.mintick) + "-" + str.tostring(zone_top, format.mintick)
+            table.cell(tbl_kil, 0, data_row, range_str, text_color=color.white, text_size=size.small, bgcolor=row_bg)
+            
+            table.cell(tbl_kil, 1, data_row, str.tostring(poc, format.mintick), text_color=side_color, text_size=size.small, bgcolor=row_bg)
+            
+            string side_text = has_conflict ? "⚠️" : (side == "buy" ? "🟢" : "🔴")
+            table.cell(tbl_kil, 2, data_row, side_text, text_color=side_color, text_size=size.small, bgcolor=row_bg)
+            
+            table.cell(tbl_kil, 3, data_row, str.tostring(peak_ratio, "#.#") + ":1", text_color=side_color, text_size=size.small, bgcolor=row_bg)
+            
+            table.cell(tbl_kil, 4, data_row, tier, text_color=color.yellow, text_size=size.small, bgcolor=row_bg)
+            
+            table.cell(tbl_kil, 5, data_row, str.tostring(math.round(strength)), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+            
+            table.cell(tbl_kil, 6, data_row, state, text_color=state_color, text_size=size.small, bgcolor=row_bg)
+            
+            table.cell(tbl_kil, 7, data_row, str.tostring(tests), text_color=color.white, text_size=size.small, bgcolor=row_bg)
+            
+            table.cell(tbl_kil, 8, data_row, str.tostring(math.round(dist_ticks)) + "t", text_color=color.white, text_size=size.small, bgcolor=row_bg)
+            
+            table.cell(tbl_kil, 9, data_row, str.tostring(age_bars) + "b", text_color=color.white, text_size=size.small, bgcolor=row_bg)
+        else
+            color empty_bg = color.new(color.gray, 95)
+            for col = 0 to 9
+                table.cell(tbl_kil, col, data_row, "-", text_color=color.gray, text_size=size.small, bgcolor=empty_bg)
+
+// ============================================================================
+// DEBUG INFO
+// ============================================================================
+
+var table tbl_debug = table.new(position=position.bottom_right, columns=2, rows=7, bgcolor=color.new(color.black, 85), border_width=1)
+
+if barstate.islast
+    table.cell(tbl_debug, 0, 0, "DEBUG v2.1", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 60))
+    table.merge_cells(tbl_debug, 0, 0, 1, 0)
+    
+    table.cell(tbl_debug, 0, 1, "Instrument", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    table.cell(tbl_debug, 1, 1, instrument_type, text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    
+    table.cell(tbl_debug, 0, 2, "Min Volume", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    table.cell(tbl_debug, 1, 2, str.tostring(min_volume), text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    
+    table.cell(tbl_debug, 0, 3, "ATR", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    table.cell(tbl_debug, 1, 3, str.tostring(atr_value, format.mintick), text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    
+    table.cell(tbl_debug, 0, 4, "Bucket Size", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    table.cell(tbl_debug, 1, 4, str.tostring(bucket_size, format.mintick), text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    
+    float bar_range = high - low
+    int current_levels = get_adaptive_levels(bar_range, atr_value)
+    
+    table.cell(tbl_debug, 0, 5, "Levels", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    table.cell(tbl_debug, 1, 5, str.tostring(current_levels), text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    
+    table.cell(tbl_debug, 0, 6, "Active Zones", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    table.cell(tbl_debug, 1, 6, str.tostring(array.size(kil_state)), text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.gray, 80))
