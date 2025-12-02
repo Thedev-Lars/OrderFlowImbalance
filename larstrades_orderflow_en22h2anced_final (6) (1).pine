@@ -349,8 +349,10 @@ rebuild_relevance() =>
     array.clear(kl_relevance)
 
     // Remove clearly broken or stale zones
-    if array.size(kl_range_top) > 0
-        for i = array.size(kl_range_top) - 1 to 0 by -1
+    int removalCount = array.size(kl_range_top)
+    if removalCount > 0
+        for offset = 0 to removalCount - 1
+            int i = removalCount - 1 - offset
             float top = array.get(kl_range_top, i)
             float bottom = array.get(kl_range_bottom, i)
             string side = array.get(kl_side, i)
