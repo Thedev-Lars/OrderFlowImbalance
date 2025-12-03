@@ -483,20 +483,23 @@ find_trade_visual_index(int id) =>
 clear_trade_visuals() =>
     int entry_count = array.size(trade_visual_entry_lines)
     if entry_count > 0
-        for i = entry_count - 1 to 0 by -1
-            line ln = f_safe_get(trade_visual_entry_lines, i)
+        for i = 0 to entry_count - 1
+            int idx = entry_count - 1 - i
+            line ln = f_safe_get(trade_visual_entry_lines, idx)
             if not na(ln)
                 line.delete(ln)
     int risk_count = array.size(trade_visual_risk_boxes)
     if risk_count > 0
-        for i = risk_count - 1 to 0 by -1
-            box bx = f_safe_get(trade_visual_risk_boxes, i)
+        for i = 0 to risk_count - 1
+            int idx = risk_count - 1 - i
+            box bx = f_safe_get(trade_visual_risk_boxes, idx)
             if not na(bx)
                 box.delete(bx)
     int reward_count = array.size(trade_visual_reward_boxes)
     if reward_count > 0
-        for i = reward_count - 1 to 0 by -1
-            box bx = f_safe_get(trade_visual_reward_boxes, i)
+        for i = 0 to reward_count - 1
+            int idx = reward_count - 1 - i
+            box bx = f_safe_get(trade_visual_reward_boxes, idx)
             if not na(bx)
                 box.delete(bx)
     array.clear(trade_visual_ids)
@@ -1759,8 +1762,9 @@ if array.size(kl_state) > 0
                         array.set(kl_last_test_bar, i, bar_index)
 
     if array.size(removal_queue) > 0
-        for ri = array.size(removal_queue) - 1 to 0 by -1
-            int rem_idx = array.get(removal_queue, ri)
+        int removal_count = array.size(removal_queue)
+        for ri = 0 to removal_count - 1
+            int rem_idx = array.get(removal_queue, removal_count - 1 - ri)
             remove_zone(rem_idx)
         rebuild_relevance()
 
@@ -1769,7 +1773,9 @@ if array.size(kl_state) > 0
 if barstate.islast
     if showDebug and array.size(trade_state) > 0
         int latest_idx = na
-        for idx = array.size(trade_state) - 1 to 0 by -1
+        int candidate_count = array.size(trade_state)
+        for idx_offset = 0 to candidate_count - 1
+            int idx = candidate_count - 1 - idx_offset
             int ts = array.get(trade_state, idx)
             if ts == TE_STATE_POSSIBLE or ts == TE_STATE_OPEN
                 latest_idx := idx
